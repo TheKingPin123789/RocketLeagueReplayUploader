@@ -1689,10 +1689,21 @@ class App(ctk.CTk):
 
     def _append_cards(self, new_cards: list):
         start = len(self._cards)
+        self._cards.extend(new_cards)
         for i, card in enumerate(new_cards):
             self._card_index[card["filename"]] = start + i
-        self._extend_positions(new_cards)
-        self._cards.extend(new_cards)
+        if self._loading and not _COMPACT:
+            # fast incremental append — skip full re-filter on every batch
+            pad = _dims()["card_pad"]
+            y = self._total_h
+            for card in new_cards:
+                card["y"] = y
+                y += card["height"] + pad
+            self._total_h = y
+            self._active_cards.extend(new_cards)
+            self.canvas.configure(scrollregion=(0, 0, 0, self._total_h))
+        else:
+            self._apply_filters(sort=not self._loading)
         self._schedule_redraw()
 
     def _start_parse_worker(self, paths: list, gen: int):
