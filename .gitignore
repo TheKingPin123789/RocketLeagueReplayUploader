@@ -17,6 +17,9 @@ _vcredist.exe
 _rr.zip
 _rr_tmp/
 
+# dev-only scripts
+_dev_*.bat
+
 # Python bytecode
 __pycache__/
 *.pyc
