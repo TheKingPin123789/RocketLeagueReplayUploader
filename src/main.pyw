@@ -2576,6 +2576,7 @@ class App(ctk.CTk):
         def fetch_bc_ids():
             api_key = self.config_data.get("api_key", "").strip()
             if not api_key:
+                self.after(0, self._log, "[sync] no API key configured", "red")
                 return
             new_ids: set = set()
             hdrs   = {"Authorization": api_key}
@@ -2589,8 +2590,14 @@ class App(ctk.CTk):
                 while url:
                     resp = requests.get(url, headers=hdrs, params=params, timeout=15)
                     if resp.status_code == 429:
-                        time.sleep(30); return
+                        self.after(0, self._log, "[sync] rate limited — retrying in 30s")
+                        time.sleep(30)
+                        continue
+                    if resp.status_code in (401, 403):
+                        self.after(0, self._log, f"[sync] API key rejected ({resp.status_code})", "red")
+                        return
                     if resp.status_code != 200:
+                        self.after(0, self._log, f"[sync] unexpected response {resp.status_code}", "red")
                         return
                     d = resp.json()
                     for r in d.get("list", []):
@@ -2601,9 +2608,9 @@ class App(ctk.CTk):
                     if nxt.startswith("/"): nxt = "https://ballchasing.com" + nxt
                     url = nxt; params = {}
                 self._bg_sync_bc_ids = new_ids
-                self.after(0, self._log, f"[sync] {len(new_ids)} replays on your account")
+                self.after(0, self._log, f"[sync] {len(new_ids)} replays found on your account")
             except Exception as e:
-                self.after(0, self._log, f"[sync] fetch error: {e}")
+                self.after(0, self._log, f"[sync] network error: {e}", "red")
 
         def rebuild_work():
             def _sort_key(c):
@@ -2616,8 +2623,7 @@ class App(ctk.CTk):
             # Fresh bc_ids fetch on every start
             fetch_bc_ids()
             if not self._bg_sync_bc_ids:
-                self.after(0, self._log,
-                           "[sync] stopped — could not fetch your Ballchasing replays (no API key or network error)")
+                self.after(0, self._log, "[sync] stopped — see error above")
                 return
             # Resume from saved position; only rebuild if nothing left
             if not self._bg_sync_work:
