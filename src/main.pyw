@@ -1279,6 +1279,7 @@ class App(ctk.CTk):
         self._bg_sync_prio: queue.Queue = queue.Queue()
         self._bg_sync_work: deque = deque()
         self._loading = False
+        self._rebuild_id            = None
         self._save_uploaded_id      = None
         self._watch_err_id          = None
         self._upload_session_enabled = True
@@ -1500,7 +1501,7 @@ class App(ctk.CTk):
         if sort:
             def sort_key(c):
                 d = (c.get("info") or {}).get("date") or ""
-                return d if d else fmt_date(c.get("mtime", 0))
+                return (1, d) if d else (0, c.get("mtime", 0))
             active = sorted(active, key=sort_key, reverse=True)
 
         self._active_cards = active
@@ -1591,6 +1592,12 @@ class App(ctk.CTk):
         self._apply_filters()
 
     def _rebuild_positions(self):
+        if self._rebuild_id:
+            self.after_cancel(self._rebuild_id)
+        self._rebuild_id = self.after(250, self._do_rebuild)
+
+    def _do_rebuild(self):
+        self._rebuild_id = None
         self._apply_filters()
 
     def _extend_positions(self, new_cards: list):
