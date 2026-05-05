@@ -1,0 +1,23 @@
+# user data — never commit API keys or local state
+src/config.json
+src/uploaded.json
+
+# parsed replay cache
+src/cache/
+
+# bundled dependencies (installed locally by Setup.bat)
+src/lib/
+
+# downloaded replay parser binary
+src/rattletrap.exe
+src/.rrrocket_ok
+
+# downloaded VC++ redistributable (temp)
+_vcredist.exe
+_rr.zip
+_rr_tmp/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
