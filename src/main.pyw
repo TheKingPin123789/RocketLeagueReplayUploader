@@ -1694,9 +1694,7 @@ class App(ctk.CTk):
         self._upload_session_enabled = True
         self._download_active        = False
         self._tier                   = "free_tester"
-        self._dl_progress_line       = None
-        self._download_active        = False
-        self._tier                   = "free_tester"
+        self._revoked                = False
         self._dl_progress_line       = None
         self._dl_status_line         = None
         self._dl_error_line          = None
@@ -3988,7 +3986,7 @@ class App(ctk.CTk):
 
             result = self._verify_expiry(signed, guid)
             if result is None:
-                self._handle_expired()
+                self.after(0, self._handle_expired)
                 return
 
             expiry, tier = result
@@ -4014,7 +4012,10 @@ class App(ctk.CTk):
                         self.config_data["_signed_expiry"] = self._sign_expiry(new_exp, new_tier, guid)
                         self.config_data.pop("_tier", None)
                         save_config(self.config_data)
-                        self.after(EXPIRY_CHECK_MS, self._check_expiry)
+                        if getattr(self, "_revoked", False):
+                            self.after(0, self._restore_from_revoke)
+                        else:
+                            self.after(EXPIRY_CHECK_MS, self._check_expiry)
                     elif r.status_code == 403:
                         self.after(0, self._handle_expired)
                     else:
@@ -4048,26 +4049,26 @@ class App(ctk.CTk):
 
     def _handle_expired(self):
         self._stop_watching()
-        keep = messagebox.askyesno(
-            "Subscription Ended",
-            "Your subscription has expired or been revoked.\n\n"
-            "Do you want to keep your saved replay data?")
-        if not keep:
-            import shutil as _sh
-            cache = Path(__file__).parent / "cache"
-            if cache.exists():
-                _sh.rmtree(cache, ignore_errors=True)
-            uploaded = Path(__file__).parent / "uploaded.json"
-            if uploaded.exists():
-                uploaded.unlink(missing_ok=True)
-        script = Path(__file__).resolve()
-        if script.exists():
-            script.unlink(missing_ok=True)
+        self._revoked = True
         for widget in self.winfo_children():
             widget.destroy()
-        ctk.CTkLabel(self, text="Your subscription has expired.\nPlease renew to continue using the app.",
-                     font=ctk.CTkFont(size=14), text_color="#e06060").pack(expand=True, pady=(0, 16))
-        ctk.CTkButton(self, text="Close", command=self.destroy, width=120).pack(pady=(0, 40))
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame.place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkLabel(frame, text="Access Revoked",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color="#e06060").pack(pady=(0, 12))
+        ctk.CTkLabel(frame,
+                     text="Your subscription has expired or been revoked.\nContact support to restore access.",
+                     font=ctk.CTkFont(size=13),
+                     text_color="#aaaaaa").pack(pady=(0, 28))
+        ctk.CTkButton(frame, text="Close", command=self.destroy, width=120).pack()
+        self.after(30_000, self._check_expiry)
+
+    def _restore_from_revoke(self):
+        import subprocess
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        subprocess.Popen([str(pythonw), str(Path(__file__).resolve())])
+        self.destroy()
 
     # ── update check ─────────────────────────────────────────────────────────
 
@@ -4088,97 +4089,6 @@ class App(ctk.CTk):
             except Exception:
                 pass
         threading.Thread(target=worker, daemon=True).start()
-
-    def _check_expiry(self):
-        threading.Thread(target=self._do_expiry_check, daemon=True).start()
-
-    def _do_expiry_check(self):
-        try:
-            guid   = winreg.QueryValueEx(
-                winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"),
-                "MachineGuid")[0]
-            token  = self.config_data.get("_auth_token", "")
-            signed = self.config_data.get("_signed_expiry", "")
-
-            # verify local signed expiry first
-            expiry = self._verify_expiry(signed, guid)
-            if expiry is None:
-                # tampered — force server check
-                self._handle_expired()
-                return
-
-            # if expiry set and already passed locally, check server
-            if expiry:
-                from datetime import datetime
-                expiry_ts = datetime.strptime(expiry, "%Y-%m-%d %H:%M:%S UTC").timestamp()
-                if time.time() < expiry_ts:
-                    self.after(EXPIRY_CHECK_MS, self._check_expiry)
-                    return
-
-            # ping server to confirm status
-            if token and guid:
-                try:
-                    r = requests.post(f"{APP_SERVER}/verify",
-                                      json={"machine_guid": guid, "token": token},
-                                      timeout=8)
-                    if r.status_code == 200:
-                        data   = r.json()
-                        new_exp = data.get("expiry")
-                        self.config_data["_signed_expiry"] = self._sign_expiry(new_exp or "", guid)
-                        save_config(self.config_data)
-                        self.after(EXPIRY_CHECK_MS, self._check_expiry)
-                    elif r.status_code == 403:
-                        self.after(0, self._handle_expired)
-                    else:
-                        self.after(EXPIRY_CHECK_MS, self._check_expiry)
-                except Exception:
-                    self.after(EXPIRY_CHECK_MS, self._check_expiry)
-            else:
-                self.after(EXPIRY_CHECK_MS, self._check_expiry)
-        except Exception:
-            self.after(EXPIRY_CHECK_MS, self._check_expiry)
-
-    def _sign_expiry(self, expiry: str, guid: str) -> str:
-        if not expiry:
-            return ""
-        sig = hmac.new(guid.encode(), expiry.encode(), hashlib.sha256).hexdigest()
-        return base64.b64encode(f"{expiry}|{sig}".encode()).decode()
-
-    def _verify_expiry(self, signed: str, guid: str):
-        if not signed:
-            return ""  # no expiry = free user
-        try:
-            decoded = base64.b64decode(signed.encode()).decode()
-            expiry, sig = decoded.rsplit("|", 1)
-            expected = hmac.new(guid.encode(), expiry.encode(), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(expected, sig):
-                return expiry
-        except Exception:
-            pass
-        return None
-
-    def _handle_expired(self):
-        self._stop_watching()
-        keep = messagebox.askyesno(
-            "Subscription Ended",
-            "Your subscription has expired or been revoked.\n\n"
-            "Do you want to keep your saved replay data?")
-        if not keep:
-            import shutil as _sh
-            cache = Path(__file__).parent / "cache"
-            if cache.exists():
-                _sh.rmtree(cache, ignore_errors=True)
-            uploaded = Path(__file__).parent / "uploaded.json"
-            if uploaded.exists():
-                uploaded.unlink(missing_ok=True)
-        script = Path(__file__).resolve()
-        if script.exists():
-            script.unlink(missing_ok=True)
-        # show blank expired window
-        for widget in self.winfo_children():
-            widget.destroy()
-        ctk.CTkLabel(self, text="Your subscription has expired.\nPlease renew to continue using the app.",
-                     font=ctk.CTkFont(size=14), text_color="#e06060").pack(expand=True)
 
     def _check_for_updates(self):
         def worker():

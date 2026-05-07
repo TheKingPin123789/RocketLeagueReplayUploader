@@ -159,10 +159,12 @@ def main():
             status = r.json().get("status", "")
             if status in ("revoked", "expired"):
                 if SCRIPT.exists():
-                    delete_app()
-                alert("Subscription Ended",
-                      "Your access has been revoked or your subscription has expired.\n"
-                      "Please renew to continue using the app.")
+                    launch()  # main.pyw shows the revoke screen
+                else:
+                    alert("Subscription Ended",
+                          "Your access has been revoked or your subscription has expired.\n"
+                          "Please renew to continue using the app.")
+                    sys.exit(0)
             elif status == "unregistered":
                 # token mismatch — re-register
                 cfg.pop("_auth_token", None)
