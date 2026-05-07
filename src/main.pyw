@@ -163,6 +163,23 @@ def save_uploaded(uploaded: set) -> None:
     with open(UPLOADED_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(uploaded), f, indent=2)
 
+UPLOAD_IDS_FILE = BASE_DIR / "upload_ids.json"
+
+def load_upload_ids() -> dict:
+    if UPLOAD_IDS_FILE.exists():
+        try:
+            with open(UPLOAD_IDS_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_upload_id(filename: str, bc_id: str) -> None:
+    ids = load_upload_ids()
+    ids[filename] = bc_id
+    with open(UPLOAD_IDS_FILE, "w", encoding="utf-8") as f:
+        json.dump(ids, f, indent=2)
+
 MAP_NAMES: dict[str, str] = {
     # ── DFH Stadium ───────────────────────────────────────────────────────────
     "stadium_p":                        "DFH Stadium",
@@ -339,23 +356,6 @@ _TRACKER_PLATFORM: dict[str, str] = {
     "onlineplatform_nnx":    "nintendo-switch",
 }
 
-def tracker_url(player: dict) -> str | None:
-    plat = _TRACKER_PLATFORM.get((player.get("raw_platform") or "").lower())
-    if not plat:
-        return None
-    uid = player.get("online_id") or player.get("name", "")
-    return f"https://rocketleague.tracker.network/rocket-league/profile/{plat}/{uid}/overview"
-
-_TRACKER_PLATFORM: dict[str, str] = {
-    "onlineplatform_steam":  "steam",
-    "onlineplatform_epic":   "epic",
-    "onlineplatform_ps4":    "psn",
-    "onlineplatform_ps5":    "psn",
-    "onlineplatform_dingo":  "xbl",
-    "onlineplatform_switch": "nintendo-switch",
-    "onlineplatform_nnx":    "nintendo-switch",
-}
-
 def tracker_url(player: dict) -> str:
     plat = _TRACKER_PLATFORM.get((player.get("raw_platform") or "").lower()) or "epic"
     if plat == "steam":
@@ -365,95 +365,6 @@ def tracker_url(player: dict) -> str:
     if not uid or uid == "0":
         return ""
     return f"https://rocketleague.tracker.network/rocket-league/profile/{plat}/{uid}/overview"
-
-MAP_NAMES: dict[str, str] = {
-    # DFH Stadium
-    "stadium_p":                  "DFH Stadium",
-    "stadium_day_p":              "DFH Stadium (Day)",
-    "stadium_night_p":            "DFH Stadium (Night)",
-    "stadium_race_day_p":         "DFH Stadium (Throwback)",
-    "stadium_winter_p":           "DFH Stadium (Snowy)",
-    "stadium_10a_p":              "DFH Stadium (Anniversary)",
-    # Mannfield
-    "eurostadium_p":              "Mannfield",
-    "eurostadium_night_p":        "Mannfield (Night)",
-    "eurostadium_snowy_p":        "Mannfield (Snowy)",
-    "eurostadium_rainy_p":        "Mannfield (Stormy)",
-    "eurostadium_stormy_p":       "Mannfield (Stormy)",
-    "eurostadium_snownight_p":    "Mannfield (Frosty)",
-    # Beckwith Park
-    "park_p":                     "Beckwith Park",
-    "park_rainy_p":               "Beckwith Park (Stormy)",
-    "park_night_p":               "Beckwith Park (Midnight)",
-    "park_snowy_p":               "Beckwith Park (Snowy)",
-    "park_bman_p":                "Beckwith Park (Gotham Night)",
-    "park_bman_night_p":          "Beckwith Park (Gotham Night)",
-    # Urban Central
-    "trainstation_p":             "Urban Central",
-    "trainstation_night_p":       "Urban Central (Night)",
-    "trainstation_dawn_p":        "Urban Central (Dawn)",
-    # Champions Field
-    "cs_p":                       "Champions Field",
-    "cs_day_p":                   "Champions Field (Day)",
-    "cs_hw_p":                    "Champions Field (Halloween)",
-    # Utopia Coliseum
-    "utopiastadium_p":            "Utopia Coliseum",
-    "utopiastadium_dusk_p":       "Utopia Coliseum (Dusk)",
-    "utopiastadium_snow_p":       "Utopia Coliseum (Snowy)",
-    "utopiastadium_lux_p":        "Utopia Coliseum (Gilded)",
-    # Neo Tokyo
-    "neotokyo_standard_p":        "Neo Tokyo",
-    "neotokyo_p":                 "Tokyo Underpass",
-    # AquaDome
-    "underwater_p":               "AquaDome",
-    # Salty Shores
-    "beach_p":                    "Salty Shores",
-    "beach_night_p":              "Salty Shores (Night)",
-    # Wasteland
-    "wasteland_p":                "Wasteland",
-    "wasteland_night_p":          "Wasteland (Night)",
-    "wasteland_grs_p":            "Wasteland (Grasslands)",
-    # Starbase ARC
-    "arc_p":                      "Starbase ARC",
-    "arc_daydream_p":             "Starbase ARC (Aftermath)",
-    # Farmstead
-    "woods_p":                    "Farmstead",
-    "woods_winter_p":             "Farmstead (Snowy)",
-    # Forbidden Temple
-    "chn_stadium_p":              "Forbidden Temple",
-    "chn_stadium_day_p":          "Forbidden Temple (Day)",
-    # Neon Fields
-    "street_p":                   "Neon Fields",
-    "street_night_p":             "Neon Fields (Night)",
-    # Deadeye Canyon
-    "outlaw_oasis_p":             "Deadeye Canyon",
-    "outlaw_oasis_night_p":       "Deadeye Canyon (Night)",
-    # Sovereign Heights
-    "uf_day_p":                   "Sovereign Heights",
-    "uf_p":                       "Sovereign Heights",
-    # Rivals Arena
-    "arc_standard_p":             "Rivals Arena",
-    # Hoops / Rumble arenas
-    "hoopsstadium_p":             "Dunk House",
-    "throwbackstadium_p":         "Throwback Stadium",
-    "bb_p":                       "Pillars",
-    "underpass_p":                "Underpass",
-    "wasteland_s_p":              "Wasteland (Standard)",
-    "mcdm_p":                     "Octagon",
-}
-
-def map_display_name(raw: str) -> str:
-    """Return a human-readable arena name from the internal map code."""
-    if not raw:
-        return ""
-    looked_up = MAP_NAMES.get(raw.lower())
-    if looked_up:
-        return looked_up
-    # Fallback: strip trailing _P, replace underscores, title-case
-    clean = raw
-    if clean.upper().endswith("_P"):
-        clean = clean[:-2]
-    return clean.replace("_", " ").title()
 
 def fmt_date(ts: float) -> str:
     return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d  %H:%M")
@@ -1043,7 +954,7 @@ def wait_for_write(path: Path, timeout: int = 30) -> None:
         prev = size
         time.sleep(1)
 
-def upload(path: Path, config: dict, uploaded: set, on_status, force=False) -> None:
+def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_bc_id=None) -> None:
     name = path.name
     if not force and name in uploaded:
         on_status(name, "skipped"); return
@@ -1058,6 +969,13 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False) -> N
                     data={"visibility": config.get("visibility", "unlisted")},
                     timeout=60)
             if resp.status_code in (201, 409):
+                if resp.status_code == 201 and on_bc_id:
+                    try:
+                        bc_id = resp.json().get("id", "")
+                        if bc_id:
+                            on_bc_id(bc_id)
+                    except Exception:
+                        pass
                 on_status(name, "uploaded" if resp.status_code == 201 else "duplicate"); return
             on_status(name, f"error {resp.status_code}")
         except requests.RequestException:
@@ -1727,13 +1645,14 @@ class App(ctk.CTk):
         self._filt_to     = tk.StringVar(value="")
         self._filt_search = tk.StringVar(value="")
         self._filter_id   = None
-        self._filter_id   = None
+        self._my_name     = ""
 
         self._build_header()
         self._build_main_page()
         self._build_settings_page()
         self._build_replays_page()
         self._build_detail_page()
+        self._build_stats_page()
         self._show_main()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1809,8 +1728,6 @@ class App(ctk.CTk):
         self.log_box.pack(fill="both", expand=True, padx=20, pady=(0, 20))
         self.log_box._textbox.tag_config("green", foreground="#4aaa88")
         self.log_box._textbox.tag_config("red",   foreground="#e06060")
-        self.log_box._textbox.tag_config("green", foreground="#4aaa88")
-        self.log_box._textbox.tag_config("red",   foreground="#e06060")
 
     # ── replays page ──────────────────────────────────────────────────────────
 
@@ -1834,6 +1751,10 @@ class App(ctk.CTk):
                       font=ctk.CTkFont(size=12),
                       command=self._toggle_compact)
         self.compact_btn.pack(side="right", padx=(0, 8))
+        ctk.CTkButton(bar, text="Player Stats", width=90, height=28,
+                      fg_color="transparent", border_width=1, border_color=C_BORDER,
+                      font=ctk.CTkFont(size=12),
+                      command=self._show_stats).pack(side="right", padx=(0, 8))
 
         # ── filter bar ────────────────────────────────────────────────────────
         fbar = ctk.CTkFrame(self.replays_page, fg_color="transparent")
@@ -2114,12 +2035,6 @@ class App(ctk.CTk):
         else:
             self._schedule_redraw()
 
-    def _on_canvas_resize(self):
-        if _COMPACT:
-            self._apply_filters(sort=False)
-        else:
-            self._schedule_redraw()
-
     def _toggle_compact(self):
         global _COMPACT
         _COMPACT = not _COMPACT
@@ -2382,6 +2297,9 @@ class App(ctk.CTk):
         self._btn_upload = ctk.CTkButton(acts, text="Upload", width=70,
                                          command=self._detail_upload, **_btn_kw)
         self._btn_upload.pack(side="left", padx=(0, 4))
+        self._btn_bc = ctk.CTkButton(acts, text="↗ Ballchasing", width=110,
+                                     command=self._open_on_ballchasing, **_btn_kw)
+        self._btn_bc.pack(side="left", padx=(0, 4))
         ctk.CTkButton(acts, text="Rename", width=70,
                       command=self._detail_rename, **_btn_kw).pack(side="left", padx=(0, 4))
         ctk.CTkButton(acts, text="Copy", width=60,
@@ -2406,6 +2324,9 @@ class App(ctk.CTk):
         already = card.get("uploaded") or card["filename"] in self.uploaded
         self._btn_upload.configure(state="normal",
                                    text="Uploaded" if already else "Upload")
+        bc_id = load_upload_ids().get(card["filename"], "")
+        self._btn_bc.configure(state="normal" if bc_id else "disabled",
+                               text="↗ Ballchasing")
 
         # Serve from cache if already fully parsed
         cached = load_detailed(card["filename"])
@@ -2765,14 +2686,18 @@ class App(ctk.CTk):
                      text_color=C_DIM, font=ctk.CTkFont(size=11)
                      ).pack(pady=(6, 0))
 
-    def _show_replays_from_detail(self):
-        self.detail_page.pack_forget()
-        self.replays_page.pack(fill="both", expand=True)
-        self.nav_btn.configure(text="←")
-        self._current_page = "replays"
-        self._schedule_redraw()
-
     # ── detail action buttons ─────────────────────────────────────────────────
+
+    def _open_on_ballchasing(self):
+        card = self._current_card
+        if not card:
+            return
+        bc_id = load_upload_ids().get(card["filename"], "")
+        if bc_id:
+            webbrowser.open(f"https://ballchasing.com/replay/{bc_id}")
+
+    def _refresh_bc_btn(self, bc_id: str):
+        self._btn_bc.configure(state="normal" if bc_id else "disabled")
 
     def _detail_upload(self):
         card = self._current_card
@@ -2803,7 +2728,11 @@ class App(ctk.CTk):
                            f"{icons.get(status, '·')}  {name}  [{status}]")
                 lbl = "Uploaded" if status in ("uploaded", "duplicate") else status.capitalize()
                 self.after(0, lambda l=lbl: self._btn_upload.configure(state="normal", text=l))
-            upload(card["path"], self.config_data, self.uploaded, on_status, force=True)
+            def on_bc_id(bc_id, fn=card["filename"]):
+                save_upload_id(fn, bc_id)
+                self.after(0, self._refresh_bc_btn, bc_id)
+            upload(card["path"], self.config_data, self.uploaded, on_status, force=True,
+                   on_bc_id=on_bc_id)
         threading.Thread(target=worker, daemon=True).start()
 
     def _detail_rename(self):
@@ -2906,6 +2835,215 @@ class App(ctk.CTk):
         self._current_page = "replays"
         self._schedule_redraw()
 
+    # ── player stats page ────────────────────────────────────────────────────
+
+    def _build_stats_page(self):
+        self.stats_page = ctk.CTkFrame(self, fg_color="transparent")
+
+        hdr = ctk.CTkFrame(self.stats_page, fg_color="transparent")
+        hdr.pack(fill="x", padx=20, pady=(14, 6))
+        ctk.CTkButton(hdr, text="← Replays", width=90, height=28,
+                      fg_color="transparent", border_width=1,
+                      border_color=("#3B8ED0", "#1F6AA5"),
+                      command=self._show_replays_from_stats).pack(side="left")
+        ctk.CTkLabel(hdr, text="Player Stats",
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(side="left", padx=(14, 0))
+
+        search_row = ctk.CTkFrame(self.stats_page, fg_color="transparent")
+        search_row.pack(fill="x", padx=20, pady=(0, 8))
+        ctk.CTkLabel(search_row, text="Player:", text_color=C_DIM,
+                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 6))
+        self._stats_entry = ctk.CTkEntry(search_row, width=220,
+                                         placeholder_text="player name",
+                                         font=ctk.CTkFont(size=13))
+        self._stats_entry.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(search_row, text="Search", width=80, height=28,
+                      command=self._run_stats_search).pack(side="left")
+
+        self.stats_content = ctk.CTkScrollableFrame(self.stats_page,
+                                                    fg_color="transparent")
+        self.stats_content.pack(fill="both", expand=True, padx=20, pady=(0, 16))
+
+    def _prefill_stats_name(self, name: str):
+        if not self._stats_entry.get():
+            self._stats_entry.insert(0, name)
+
+    def _show_stats(self):
+        self.main_page.pack_forget()
+        self.settings_page.pack_forget()
+        self.replays_page.pack_forget()
+        self.detail_page.pack_forget()
+        self.stats_page.pack(fill="both", expand=True)
+        self.nav_btn.configure(text="←")
+        self._current_page = "stats"
+
+    def _show_replays_from_stats(self):
+        self.stats_page.pack_forget()
+        self.replays_page.pack(fill="both", expand=True)
+        self.nav_btn.configure(text="←")
+        self._current_page = "replays"
+        self._schedule_redraw()
+
+    def _run_stats_search(self):
+        name = self._stats_entry.get().strip()
+        if not name:
+            return
+        for w in self.stats_content.winfo_children():
+            w.destroy()
+        ctk.CTkLabel(self.stats_content, text="Scanning replays…",
+                     text_color=C_DIM, font=ctk.CTkFont(size=13)).pack(pady=20)
+        def worker():
+            games = self._compute_player_stats(name)
+            self.after(0, lambda: self._render_player_stats(name, games))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _compute_player_stats(self, name: str) -> list:
+        games = []
+        if not CACHE_DIR.exists():
+            return games
+        name_lower = name.strip().lower()
+        upload_ids = load_upload_ids()
+        cache_files = sorted(CACHE_DIR.glob("*.json"),
+                             key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in cache_files:
+            try:
+                with open(f, encoding="utf-8") as fp:
+                    info = json.load(fp)
+            except Exception:
+                continue
+            if not info.get("_detailed"):
+                continue
+            players = info.get("players", [])
+            p = next((p for p in players
+                      if p.get("name", "").strip().lower() == name_lower), None)
+            if p is None:
+                continue
+            filename = f.stem   # e.g. "abc123.replay"
+            wt = info.get("winning_team", -1)
+            won = (wt == p.get("team", -2)) if wt >= 0 else None
+            ts  = info.get("team_size", 0)
+            mode_str = {1: "1v1", 2: "2v2", 3: "3v3", 4: "4v4"}.get(ts, f"{ts}v{ts}" if ts else "")
+            games.append({
+                "date":      (info.get("date") or "")[:10],
+                "map":       map_display_name(info.get("map", "")),
+                "mode":      mode_str,
+                "won":       won,
+                "score":     p.get("score",   0),
+                "goals":     p.get("goals",   0),
+                "assists":   p.get("assists", 0),
+                "saves":     p.get("saves",   0),
+                "shots":     p.get("shots",   0),
+                "demos":     p.get("demos",   0),
+                "demoed":    p.get("demoed",  0),
+                "bpm":       (p.get("boost") or {}).get("bpm", 0),
+                "bc_id":     upload_ids.get(filename, ""),
+                "filename":  filename,
+            })
+        return games
+
+    def _render_player_stats(self, name: str, games: list):
+        for w in self.stats_content.winfo_children():
+            w.destroy()
+
+        if not games:
+            ctk.CTkLabel(self.stats_content,
+                         text=f'No detailed replay data found for "{name}".\n'
+                              'Only the most recent 20 replays are stored with detailed stats.',
+                         text_color=C_DIM, font=ctk.CTkFont(size=13),
+                         justify="center").pack(pady=30)
+            return
+
+        n       = len(games)
+        wins    = sum(1 for g in games if g["won"] is True)
+        losses  = sum(1 for g in games if g["won"] is False)
+        tot_sh  = sum(g["shots"]   for g in games)
+        tot_gl  = sum(g["goals"]   for g in games)
+
+        def _avg(key): return sum(g[key] for g in games) / n
+
+        # ── aggregate block ───────────────────────────────────────────────────
+        agg = ctk.CTkFrame(self.stats_content, fg_color="#1e1e1e", corner_radius=6)
+        agg.pack(fill="x", pady=(0, 10))
+        agg.columnconfigure(tuple(range(8)), weight=1)
+
+        def _agg_col(frame, col, label, value):
+            ctk.CTkLabel(frame, text=label, text_color=C_DIM,
+                         font=ctk.CTkFont(size=11)).grid(
+                row=0, column=col, padx=12, pady=(10, 2), sticky="ew")
+            ctk.CTkLabel(frame, text=value, text_color=C_SCORE,
+                         font=ctk.CTkFont(size=16, weight="bold")).grid(
+                row=1, column=col, padx=12, pady=(0, 10), sticky="ew")
+
+        win_pct = f"{wins/n*100:.0f}%" if n else "—"
+        _agg_col(agg, 0, "Games",   str(n))
+        _agg_col(agg, 1, "W / L",   f"{wins} / {losses}")
+        _agg_col(agg, 2, "Win %",   win_pct)
+        _agg_col(agg, 3, "Avg Score", f"{_avg('score'):.0f}")
+        _agg_col(agg, 4, "Goals/g",  f"{_avg('goals'):.2f}")
+        _agg_col(agg, 5, "Assists/g",f"{_avg('assists'):.2f}")
+        _agg_col(agg, 6, "Saves/g",  f"{_avg('saves'):.2f}")
+        _agg_col(agg, 7, "Shots/g",  f"{_avg('shots'):.2f}")
+
+        agg2 = ctk.CTkFrame(self.stats_content, fg_color="#1e1e1e", corner_radius=6)
+        agg2.pack(fill="x", pady=(0, 10))
+        agg2.columnconfigure(tuple(range(5)), weight=1)
+        shoot_pct = f"{tot_gl/tot_sh*100:.1f}%" if tot_sh else "0.0%"
+        _agg_col(agg2, 0, "Shoot %",    shoot_pct)
+        _agg_col(agg2, 1, "Demos/g",    f"{_avg('demos'):.2f}")
+        _agg_col(agg2, 2, "Demoed/g",   f"{_avg('demoed'):.2f}")
+        bpm_vals = [g["bpm"] for g in games if g["bpm"]]
+        avg_bpm = f"{sum(bpm_vals)/len(bpm_vals):.0f}" if bpm_vals else "—"
+        _agg_col(agg2, 3, "Avg BPM",    avg_bpm)
+        _agg_col(agg2, 4, "Replays",    f"last {n}")
+
+        # ── per-game table ────────────────────────────────────────────────────
+        ctk.CTkLabel(self.stats_content, text="Recent games",
+                     text_color=C_DIM, font=ctk.CTkFont(size=12, weight="bold"),
+                     anchor="w").pack(fill="x", pady=(4, 2))
+
+        tbl = ctk.CTkFrame(self.stats_content, fg_color="#1e1e1e", corner_radius=6)
+        tbl.pack(fill="x")
+        TCOLS = ["Date", "Map", "Mode", "Score", "G", "A", "S", "Sh", "Result", "↗"]
+        for col, hdr in enumerate(TCOLS):
+            ctk.CTkLabel(tbl, text=hdr, text_color=C_DIM,
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         anchor="w" if col < 3 else "e"
+                         ).grid(row=0, column=col,
+                                padx=(12 if col == 0 else 6, 6), pady=(8, 4),
+                                sticky="w" if col < 3 else "e")
+        tk.Frame(tbl, bg=C_DIVIDER, height=1).grid(
+            row=1, column=0, columnspan=len(TCOLS), sticky="ew", padx=8)
+
+        for row, g in enumerate(games, 2):
+            if g["won"] is True:
+                result_text, result_color = "Win",  "#4aaa88"
+            elif g["won"] is False:
+                result_text, result_color = "Loss", "#e06060"
+            else:
+                result_text, result_color = "—", C_DIM
+            vals = [g["date"], g["map"] or "—", g["mode"],
+                    str(g["score"]), str(g["goals"]), str(g["assists"]),
+                    str(g["saves"]), str(g["shots"])]
+            for col, val in enumerate(vals):
+                ctk.CTkLabel(tbl, text=val, text_color=C_SCORE,
+                             font=ctk.CTkFont(size=13),
+                             anchor="w" if col < 3 else "e"
+                             ).grid(row=row, column=col,
+                                    padx=(12 if col == 0 else 6, 6), pady=3,
+                                    sticky="w" if col < 3 else "e")
+            ctk.CTkLabel(tbl, text=result_text, text_color=result_color,
+                         font=ctk.CTkFont(size=13), anchor="e"
+                         ).grid(row=row, column=8, padx=(6, 6), pady=3, sticky="e")
+            if g["bc_id"]:
+                ctk.CTkButton(tbl, text="↗", width=28, height=22,
+                              fg_color="transparent", border_width=1,
+                              border_color=C_BORDER, font=ctk.CTkFont(size=11),
+                              command=lambda bid=g["bc_id"]: webbrowser.open(
+                                  f"https://ballchasing.com/replay/{bid}")
+                              ).grid(row=row, column=9, padx=(4, 10), pady=3)
+            else:
+                ctk.CTkLabel(tbl, text="", width=28).grid(row=row, column=9, padx=(4, 10))
+
     # ── settings page ─────────────────────────────────────────────────────────
 
     def _build_settings_page(self):
@@ -3006,6 +3144,8 @@ class App(ctk.CTk):
             self._show_settings()
         elif self._current_page == "detail":
             self._show_replays_from_detail()
+        elif self._current_page == "stats":
+            self._show_replays_from_stats()
         else:
             self._show_main()
 
@@ -3235,7 +3375,8 @@ class App(ctk.CTk):
                             self.after(0, _mark)
                             if status == "uploaded":
                                 self.after(2000, self._fetch_quota)
-                    upload(p, self.config_data, self.uploaded, on_status)
+                    upload(p, self.config_data, self.uploaded, on_status,
+                           on_bc_id=lambda bc_id, fn=n: save_upload_id(fn, bc_id))
 
                 threading.Thread(target=do_upload, daemon=True).start()
 
@@ -3790,6 +3931,10 @@ class App(ctk.CTk):
                 u24, m24 = d24.get("used", "?"), d24.get("max", "?")
                 u7,  m7  = d7 .get("used", "?"), d7 .get("max", "?")
                 tier  = data.get("type", "")
+                name  = data.get("name", "")
+                if name and not self._my_name:
+                    self._my_name = name
+                    self.after(0, self._prefill_stats_name, name)
                 tier_str = f"  [{tier}]" if tier else ""
                 text  = (f"Upload quota:{tier_str}  "
                          f"24h: {u24}/{m24}  —  7d: {u7}/{m7}")
