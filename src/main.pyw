@@ -2272,17 +2272,27 @@ class App(ctk.CTk):
             all_replays = sorted(Path(folder).glob("*.replay"),
                                  key=lambda f: f.stat().st_mtime, reverse=True)
             # Phase 1: basic card cache for all uncached replays
-            for path in all_replays:
-                if not load_cached(path.name):
-                    info = parse_card_data(path)
-                    if info:
-                        save_cache(path.name, info)
+            to_parse = [p for p in all_replays if not load_cached(p.name)]
+            if to_parse:
+                self.after(0, self._log,
+                           f"[cache] Parsing {len(to_parse)} uncached replay(s)…")
+            for path in to_parse:
+                info = parse_card_data(path)
+                if info:
+                    save_cache(path.name, info)
             # Phase 2: full network-parse for the 20 most recent
-            for path in all_replays[:DETAIL_LIMIT]:
-                if not load_detailed(path.name):
-                    info = parse_detailed(path)
-                    if info:
-                        save_detailed(path.name, info)
+            to_detail = [p for p in all_replays[:DETAIL_LIMIT]
+                         if not load_detailed(p.name)]
+            if to_detail:
+                self.after(0, self._log,
+                           f"[cache] Network-parsing {len(to_detail)} replay(s) for detailed stats…")
+            for path in to_detail:
+                info = parse_detailed(path)
+                if info:
+                    save_detailed(path.name, info)
+                    self.after(0, self._log, f"[cache] parsed  {path.name}")
+            if to_detail:
+                self.after(0, self._log, "[cache] Detailed stats ready.")
             self._enforce_detail_limit()
 
         threading.Thread(target=worker, daemon=True).start()
@@ -3188,10 +3198,12 @@ class App(ctk.CTk):
             # Background: detailed-parse the new replay, evict oldest
             def do_detail(p=path, n=filename):
                 if RATTLETRAP.exists() and not load_detailed(n):
+                    self.after(0, self._log, f"[parse] Network-parsing {n}…")
                     info = parse_detailed(p)
                     if info:
                         save_detailed(n, info)
                         self._enforce_detail_limit()
+                        self.after(0, self._log, f"[parse] Done  {n}")
             threading.Thread(target=do_detail, daemon=True).start()
 
             if self._upload_session_enabled and self.config_data.get("upload_on_detect", True):
@@ -3748,7 +3760,9 @@ class App(ctk.CTk):
         api_key = self.config_data.get("api_key", "").strip()
         if not api_key:
             self.quota_label.configure(text="Upload quota: no API key set")
+            self._log("↻ quota refresh — no API key set", "red")
             return
+        self._log("↻ refreshing upload quota…")
         def worker():
             try:
                 resp = requests.get(
@@ -3758,6 +3772,8 @@ class App(ctk.CTk):
                 if resp.status_code != 200:
                     self.after(0, lambda: self.quota_label.configure(
                         text=f"Upload quota: error {resp.status_code}"))
+                    self.after(0, self._log,
+                               f"↻ quota refresh — error {resp.status_code}", "red")
                     return
                 data  = resp.json()
                 q     = data.get("quota") or {}
@@ -3770,9 +3786,13 @@ class App(ctk.CTk):
                 text  = (f"Upload quota:{tier_str}  "
                          f"24h: {u24}/{m24}  —  7d: {u7}/{m7}")
                 self.after(0, lambda t=text: self.quota_label.configure(text=t))
+                self.after(0, self._log,
+                           f"↻ quota: 24h {u24}/{m24}  —  7d {u7}/{m7}")
             except Exception:
                 self.after(0, lambda: self.quota_label.configure(
                     text="Upload quota: could not reach ballchasing.com"))
+                self.after(0, self._log,
+                           "↻ quota refresh — could not reach ballchasing.com", "red")
         threading.Thread(target=worker, daemon=True).start()
 
     def _schedule_save_uploaded(self):
