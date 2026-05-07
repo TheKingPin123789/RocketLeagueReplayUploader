@@ -46,17 +46,6 @@ GITHUB_REPO      = "TheKingPin123789/RocketLeagueReplayUploader"
 APP_SERVER       = "http://46.101.184.78:8766"
 EXPIRY_CHECK_MS  = 3_600_000  # re-check every hour
 
-# Load analyze_replay.py for network-frame analysis functions
-_AR_MOD = None
-try:
-    _ar_path = BASE_DIR.parent / "analyze_replay.py"
-    if _ar_path.exists():
-        _spec   = _ilu.spec_from_file_location("analyze_replay", _ar_path)
-        _AR_MOD = _ilu.module_from_spec(_spec)
-        _spec.loader.exec_module(_AR_MOD)
-except Exception:
-    pass
-
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -100,8 +89,6 @@ C_CARD        = "#1e1e1e"
 C_BORDER      = "#2d2d2d"
 C_BORDER_FAIL = "#7a2020"
 C_CARD_FAIL   = "#1e1414"
-C_BORDER_FAIL = "#7a2020"
-C_CARD_FAIL   = "#1e1414"
 C_DIVIDER     = "#262626"
 C_BLUE        = "#64b5f6"
 C_ORANGE      = "#ffb74d"
@@ -109,8 +96,6 @@ C_SCORE       = "#ffffff"
 C_DIM         = "#555555"
 C_DATE        = "#777777"
 C_CHECK       = "#6fcf97"
-
-RANKED_PLAYLISTS = frozenset({10, 11, 12, 13, 27, 28, 29, 30, 34})
 
 RANKED_PLAYLISTS = frozenset({10, 11, 12, 13, 27, 28, 29, 30, 34})
 CASUAL_PLAYLISTS = frozenset({1, 2, 3, 4, 6, 7, 31})
@@ -2255,49 +2240,6 @@ class App(ctk.CTk):
         while len(files) > max_d:
             files.pop(0).unlink(missing_ok=True)
 
-    # ── background detail worker ──────────────────────────────────────────────
-
-    def _start_detail_worker(self, gen: int):
-        if not RATTLETRAP.exists():
-            return
-        queue = [card["path"] for card in self._cards
-                 if not load_detailed(card["filename"])]
-        self._detail_queue = queue
-        self._detail_gen   = gen
-        self._detail_next(gen)
-
-    def _detail_next(self, gen: int):
-        if self._detail_gen != gen:
-            return
-        # skip any already-cached entries (may have been done via click)
-        while self._detail_queue:
-            path = self._detail_queue[0]
-            if load_detailed(path.name):
-                self._detail_queue.pop(0)
-            else:
-                break
-        if not self._detail_queue or self._detail_gen != gen:
-            return
-        path = self._detail_queue.pop(0)
-
-        def do_work():
-            info = parse_detailed(path)
-            if info:
-                save_detailed(path.name, info)
-                self._enforce_detail_limit()
-            self.after(0, lambda g=gen: self._detail_next(g))
-
-        threading.Thread(target=do_work, daemon=True).start()
-
-    def _enforce_detail_limit(self):
-        max_d = int(self.config_data.get("max_detailed", 100))
-        if max_d <= 0:
-            return
-        files = sorted(CACHE_DIR.glob("*.detailed.json"),
-                       key=lambda f: f.stat().st_mtime)
-        while len(files) > max_d:
-            files.pop(0).unlink(missing_ok=True)
-
     # ── canvas click ──────────────────────────────────────────────────────────
 
     def _on_canvas_click(self, event):
@@ -2349,11 +2291,6 @@ class App(ctk.CTk):
                       fg_color="transparent", border_width=1, border_color="#7a2020",
                       text_color="#e06060",
                       command=self._detail_delete).pack(side="left")
-
-        self.detail_meta = ctk.CTkLabel(bar, text="",
-                                        font=ctk.CTkFont(size=13),
-                                        text_color=C_DATE)
-        self.detail_meta.pack(side="left", padx=12)
 
         # ── row 2: meta info ──────────────────────────────────────────────────
         self.detail_meta = ctk.CTkLabel(header, text="",
@@ -3278,8 +3215,6 @@ class App(ctk.CTk):
                             self.after(0, _mark)
                             if status == "uploaded":
                                 self.after(2000, self._fetch_quota)
-                            if status == "uploaded":
-                                self.after(2000, self._fetch_quota)
                     upload(p, self.config_data, self.uploaded, on_status)
 
                 threading.Thread(target=do_upload, daemon=True).start()
@@ -3300,45 +3235,6 @@ class App(ctk.CTk):
             self.observer = None
         self._set_status(False)
         self._log("Stopped watching.")
-
-    def _fetch_quota(self):
-        api_key = self.config_data.get("api_key", "").strip()
-        if not api_key:
-            self.quota_label.configure(text="Upload quota: no API key set")
-            return
-        def worker():
-            try:
-                resp = requests.get(
-                    "https://ballchasing.com/api/",
-                    headers={"Authorization": api_key},
-                    timeout=10)
-                if resp.status_code != 200:
-                    self.after(0, lambda: self.quota_label.configure(
-                        text=f"Upload quota: error {resp.status_code}"))
-                    return
-                data = resp.json()
-                q    = data.get("quota") or {}
-                d24  = q.get("uploads_in_24h") or {}
-                u24  = d24.get("used", "?");  m24 = d24.get("max", "?")
-                left = (m24 - u24) if isinstance(m24, int) and isinstance(u24, int) else "?"
-                text = f"Upload quota:  {left} / {m24} (24h)"
-                self.after(0, lambda t=text: self.quota_label.configure(text=t))
-                self.after(0, self._log, f"[quota] {left} / {m24} remaining (24h)")
-            except Exception:
-                self.after(0, lambda: self.quota_label.configure(
-                    text="Upload quota: could not reach ballchasing.com"))
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _schedule_save_uploaded(self):
-        if self._save_uploaded_id:
-            self.after_cancel(self._save_uploaded_id)
-        self._save_uploaded_id = self.after(3000, self._flush_save_uploaded)
-
-    def _flush_save_uploaded(self):
-        if self._save_uploaded_id:
-            self.after_cancel(self._save_uploaded_id)
-            self._save_uploaded_id = None
-        save_uploaded(self.uploaded)
 
     # ── bulk download ─────────────────────────────────────────────────────────
 
