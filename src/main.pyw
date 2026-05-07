@@ -1739,19 +1739,18 @@ class App(ctk.CTk):
         self.replays_title = ctk.CTkLabel(bar, text="Replays",
                                           font=ctk.CTkFont(size=16, weight="bold"))
         self.replays_title.pack(side="left")
-        btn_col = ctk.CTkFrame(bar, fg_color="transparent")
-        btn_col.pack(side="right")
-        ctk.CTkButton(btn_col, text="↻  Refresh", width=90, height=28,
+        btn_row = ctk.CTkFrame(bar, fg_color="transparent")
+        btn_row.pack(side="right")
+        ctk.CTkButton(btn_row, text="↻  Refresh", width=90, height=28,
                       fg_color="transparent", border_width=1,
                       border_color=("#3B8ED0", "#1F6AA5"),
-                      command=self._load_replays).pack()
-
-        self.compact_btn = ctk.CTkButton(bar, text="Compact", width=75, height=28,
+                      command=self._load_replays).pack(side="right")
+        self.compact_btn = ctk.CTkButton(btn_row, text="Compact", width=75, height=28,
                       fg_color="transparent", border_width=1, border_color=C_BORDER,
                       font=ctk.CTkFont(size=12),
                       command=self._toggle_compact)
         self.compact_btn.pack(side="right", padx=(0, 8))
-        ctk.CTkButton(bar, text="Player Stats", width=90, height=28,
+        ctk.CTkButton(btn_row, text="Player Stats", width=90, height=28,
                       fg_color="transparent", border_width=1, border_color=C_BORDER,
                       font=ctk.CTkFont(size=12),
                       command=self._show_stats).pack(side="right", padx=(0, 8))
