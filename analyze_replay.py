@@ -3,6 +3,7 @@ Network-frame stats extraction from rrrocket --network-parse output.
 All functions receive the parsed replay dict and return stats dicts keyed
 by player name.  Field names match what the detail-view UI expects.
 """
+__version__ = "1.2"
 
 # ── RL field constants ────────────────────────────────────────────────────────
 _SSL_SPEED  = 2200.0   # supersonic threshold (uu/s)
@@ -179,7 +180,8 @@ def extract_demos(frames, pri_name, car_to_pri):
     return demos
 
 
-def extract_boost_stats(frames, car_to_pri, pri_name, boost_to_car, duration):
+def extract_boost_stats(frames, car_to_pri, pri_name, boost_to_car, duration,
+                        objects=None):
     """
     Returns {player_name: {bpm, avg_boost, time_empty_pct, time_full_pct,
                            amount_collected, boost_used,
@@ -187,22 +189,54 @@ def extract_boost_stats(frames, car_to_pri, pri_name, boost_to_car, duration):
 
     boost_to_car must be the COMPLETE map {boost_actor_id: car_actor_id} returned
     by build_actor_maps (all game segments, not a lossy reversal).
+    objects is the replay objects list; when provided, pickup events are used for
+    accurate overfill (including at-full-boost collects).  Falls back to delta-
+    based overfill when objects is absent or no pickup events are seen.
     """
+    objects = objects or []
     OID_RB = _find_rb_oid(frames)
-    car_speed: dict[int, float] = {}
 
-    # boost_actor_id → [(time, raw_amount_0_255, car_speed_at_time)]
-    boost_samples: dict[int, list] = {}
+    # Identify pickup property OID and pad archetypes from objects list
+    OID_PICKUP      = None
+    BIG_PAD_ARCHS   = set()
+    SMALL_PAD_ARCHS = set()
+    for i, obj_name in enumerate(objects):
+        if ":NewReplicatedPickupData" in obj_name:
+            OID_PICKUP = i
+        if "Pickup_Boost" in obj_name or "BoostPad" in obj_name:
+            if "Small" in obj_name:
+                SMALL_PAD_ARCHS.add(i)
+            else:
+                BIG_PAD_ARCHS.add(i)
+
+    car_speed:          dict[int, float] = {}
+    boost_samples:      dict[int, list]  = {}  # boost_actor_id → [(t, raw, spd)]
+    car_boost_timeline: dict[int, list]  = {}  # car_id → [(t, boost_pct)] sorted
+    pad_actor_type:     dict[int, str]   = {}  # pad_actor_id → "big"/"small"
+    pickup_events:      list             = []  # (t, car_id, "big"/"small")
 
     for frame in frames:
         t = frame.get("time", 0)
+
+        for actor in (frame.get("new_actors") or []):
+            aid = actor.get("actor_id")
+            oid = actor.get("object_id")
+            if aid is None or oid is None:
+                continue
+            if oid in BIG_PAD_ARCHS:
+                pad_actor_type[aid] = "big"
+            elif oid in SMALL_PAD_ARCHS:
+                pad_actor_type[aid] = "small"
+
         for upd in (frame.get("updated_actors") or []):
             aid  = upd.get("actor_id")
             oid  = upd.get("object_id")
             attr = upd.get("attribute") or {}
+
             if oid == OID_RB and aid in car_to_pri:
                 rb = attr.get("RigidBody") or {}
                 car_speed[aid] = _speed(rb)
+
             rb_data = attr.get("ReplicatedBoost")
             if rb_data is not None and aid in boost_to_car:
                 car_id = boost_to_car[aid]
@@ -210,6 +244,41 @@ def extract_boost_stats(frames, car_to_pri, pri_name, boost_to_car, duration):
                 if aid not in boost_samples:
                     boost_samples[aid] = []
                 boost_samples[aid].append((t, amount, car_speed.get(car_id, 0)))
+                if car_id not in car_boost_timeline:
+                    car_boost_timeline[car_id] = []
+                car_boost_timeline[car_id].append((t, amount / 2.55))
+
+            # Pad pickup events
+            if OID_PICKUP is not None and oid == OID_PICKUP and aid in pad_actor_type:
+                pu = attr.get("PickupNew") or attr.get("Pickup") or {}
+                if pu.get("picked_up"):
+                    ins = pu.get("instigator_id") or pu.get("instigator") or {}
+                    if ins.get("active"):
+                        car_id = ins.get("actor", -1)
+                        if car_id in car_to_pri:
+                            pickup_events.append((t, car_id, pad_actor_type[aid]))
+
+    for tl in car_boost_timeline.values():
+        tl.sort()
+
+    # Pickup-based overfill: accurate because it captures at-full collects
+    pickup_overfill: dict[str, float] = {}
+    has_pickup_data: set[str]         = set()
+    for t, car_id, ptype in pickup_events:
+        pri_id = car_to_pri.get(car_id)
+        if pri_id is None:
+            continue
+        name = pri_name.get(pri_id)
+        if not name:
+            continue
+        boost_before = 0.0
+        for sample_t, sample_boost in car_boost_timeline.get(car_id, []):
+            if sample_t >= t:
+                break
+            boost_before = sample_boost
+        over = boost_before if ptype == "big" else max(0.0, boost_before + 12 - 100)
+        pickup_overfill[name] = pickup_overfill.get(name, 0.0) + over
+        has_pickup_data.add(name)
 
     # Accumulate per player across ALL boost actors / game segments
     accum: dict[str, dict] = {}
@@ -226,16 +295,9 @@ def extract_boost_stats(frames, car_to_pri, pri_name, boost_to_car, duration):
             continue
 
         samples.sort(key=lambda s: s[0])
-        seg_total  = 0.0
-        seg_empty  = 0.0
-        seg_full   = 0.0
-        seg_used   = 0.0
-        seg_sonic  = 0.0
-        seg_coll   = 0.0
-        seg_big    = 0
-        seg_small  = 0
-        seg_over   = 0.0
-        seg_bsum   = 0.0
+        seg_total = seg_empty = seg_full = seg_used = seg_sonic = 0.0
+        seg_coll  = seg_over  = seg_bsum = 0.0
+        seg_big   = seg_small = 0
 
         for i in range(1, len(samples)):
             t0, a0, spd0 = samples[i-1]
@@ -246,23 +308,20 @@ def extract_boost_stats(frames, car_to_pri, pri_name, boost_to_car, duration):
             seg_total += dt
             a0n = a0 / 2.55
             seg_bsum  += a0n * dt
-            if a0 == 0:
-                seg_empty += dt
-            if a0 >= 254:
-                seg_full  += dt
+            if a0 == 0:   seg_empty += dt
+            if a0 >= 254: seg_full  += dt
             delta = a1 - a0
             if delta < 0:
                 used = -delta / 2.55
-                seg_used  += used
+                seg_used += used
                 if spd0 >= _SSL_SPEED:
                     seg_sonic += used
             elif delta > 0:
                 gain = delta / 2.55
                 seg_coll += gain
                 if gain > 12:
-                    # big pad fills to 100%; boost already held is wasted
                     seg_big  += 1
-                    seg_over += a0n
+                    seg_over += a0n              # delta-based fallback
                 else:
                     seg_small += 1
                     seg_over  += max(0.0, a0n + 12 - 100)
@@ -292,6 +351,8 @@ def extract_boost_stats(frames, car_to_pri, pri_name, boost_to_car, duration):
         if tt <= 0:
             continue
         dur = duration if duration and duration > 0 else tt
+        # Prefer pickup-based overfill; fall back to delta-based if no pickup events seen
+        overfill = pickup_overfill.get(name, a["over"]) if name in has_pickup_data else a["over"]
         results[name] = {
             "bpm":              round(a["coll"] / (dur / 60), 1) if dur > 0 else 0,
             "avg_boost":        round(a["bsum"] / tt, 1),
@@ -302,7 +363,7 @@ def extract_boost_stats(frames, car_to_pri, pri_name, boost_to_car, duration):
             "big_pads":         a["big"],
             "small_pads":       a["small"],
             "boost_sonic_used": round(a["sonic"], 1),
-            "overfill":         round(a["over"], 1),
+            "overfill":         round(overfill, 1),
         }
     return results
 

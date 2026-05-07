@@ -50,7 +50,7 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 CACHE_VERSION  = 4      # bump to invalidate all header caches
-DETAIL_VERSION = 6      # bump to re-parse detailed network stats
+DETAIL_VERSION = 7      # bump to re-parse detailed network stats
 RENDER_BUFFER    = 800   # px above/below viewport to pre-render (hides load pop-in while scrolling)
 CARD_MARGIN_X    = 10    # left/right margin
 SCORE_W          = 52    # left score column width
@@ -679,7 +679,8 @@ def parse_detailed(path: Path) -> dict | None:
                 net_demos   = _AR_MOD.extract_demos(frames, pri_name, car_to_pri)
                 boost_stats = _AR_MOD.extract_boost_stats(
                     frames, car_to_pri, pri_name, boost_to_car,
-                    duration=result.get("duration") or 0)
+                    duration=result.get("duration") or 0,
+                    objects=objects)
                 p_teams = {p["name"]: p["team"] for p in result["players"]}
                 pos_stats   = _AR_MOD.extract_position_stats(
                     frames, objects, car_to_pri, pri_name, p_teams)
@@ -728,9 +729,32 @@ try:
 except ImportError:
     _BOXCARS = False
 
-_AR_MOD = None
+_AR_MOD   = None
+_ar_path  = BASE_DIR.parent / "analyze_replay.py"
+_AR_URL   = "http://46.101.184.78/analyze_replay.py"
+AR_VERSION = "1.2"   # must match __version__ in analyze_replay.py
+
+def _ensure_analyze_replay():
+    """Download or update analyze_replay.py if missing or on a different version."""
+    if _ar_path.exists():
+        try:
+            for line in _ar_path.read_text(encoding="utf-8").splitlines()[:10]:
+                if line.startswith("__version__"):
+                    if AR_VERSION in line:
+                        return   # already up to date
+                    break        # wrong version — fall through to download
+        except Exception:
+            pass
+    try:
+        import urllib.request
+        data = urllib.request.urlopen(_AR_URL, timeout=10).read()
+        _ar_path.write_bytes(data)
+    except Exception:
+        pass
+
+_ensure_analyze_replay()
+
 try:
-    _ar_path = BASE_DIR.parent / "analyze_replay.py"
     if _ar_path.exists():
         _ar_spec = _ilu.spec_from_file_location("analyze_replay", _ar_path)
         _AR_MOD  = _ilu.module_from_spec(_ar_spec)
