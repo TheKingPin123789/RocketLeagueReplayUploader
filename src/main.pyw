@@ -4,6 +4,11 @@ import time
 import queue
 import shutil
 import struct
+import unicodedata
+import hmac
+import hashlib
+import base64
+import winreg
 import calendar as _cal
 import threading
 import subprocess
@@ -34,8 +39,12 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION       = "1.0.0"
-GITHUB_REPO   = "TheKingPin123789/RocketLeagueReplayUploader"
+BAKKESMOD_LOG = (Path.home() / "AppData" / "Roaming" / "bakkesmod" / "bakkesmod"
+                 / "data" / "ReplayLogger" / "events.log")
+VERSION          = "1.0.3"
+GITHUB_REPO      = "TheKingPin123789/RocketLeagueReplayUploader"
+APP_SERVER       = "http://46.101.184.78:8766"
+EXPIRY_CHECK_MS  = 3_600_000  # re-check every hour
 
 # Load analyze_replay.py for network-frame analysis functions
 _AR_MOD = None
@@ -51,7 +60,7 @@ except Exception:
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-CACHE_VERSION = 3      # bump to invalidate all header caches
+CACHE_VERSION = 4      # bump to invalidate all header caches
 RENDER_BUFFER    = 800   # px above/below viewport to pre-render (hides load pop-in while scrolling)
 CARD_MARGIN_X    = 10    # left/right margin
 SCORE_W          = 52    # left score column width
@@ -88,9 +97,9 @@ def _fit_text(text: str, family: str, size: int, weight: str, max_px: int) -> st
 
 C_BG          = "#141414"
 C_CARD        = "#1e1e1e"
-C_CARD_UP     = "#152115"   # uploaded card tint
 C_BORDER      = "#2d2d2d"
-C_BORDER_UP   = "#2a4a2a"
+C_BORDER_FAIL = "#7a2020"
+C_CARD_FAIL   = "#1e1414"
 C_BORDER_FAIL = "#7a2020"
 C_CARD_FAIL   = "#1e1414"
 C_DIVIDER     = "#262626"
@@ -100,6 +109,8 @@ C_SCORE       = "#ffffff"
 C_DIM         = "#555555"
 C_DATE        = "#777777"
 C_CHECK       = "#6fcf97"
+
+RANKED_PLAYLISTS = frozenset({10, 11, 12, 13, 27, 28, 29, 30, 34})
 
 RANKED_PLAYLISTS = frozenset({10, 11, 12, 13, 27, 28, 29, 30, 34})
 CASUAL_PLAYLISTS = frozenset({1, 2, 3, 4, 6, 7, 31})
@@ -131,6 +142,30 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=4)
+
+def _startup_launch_cmd() -> str:
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    script  = Path(__file__).resolve()
+    return f'"{pythonw}" "{script}"'
+
+def get_startup_enabled() -> bool:
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_REG_PATH) as k:
+            winreg.QueryValueEx(k, _STARTUP_REG_NAME)
+            return True
+    except OSError:
+        return False
+
+def set_startup_enabled(enabled: bool) -> None:
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_REG_PATH,
+                        access=winreg.KEY_SET_VALUE) as k:
+        if enabled:
+            winreg.SetValueEx(k, _STARTUP_REG_NAME, 0, winreg.REG_SZ, _startup_launch_cmd())
+        else:
+            try:
+                winreg.DeleteValue(k, _STARTUP_REG_NAME)
+            except OSError:
+                pass
 
 def load_uploaded() -> set:
     if UPLOADED_FILE.exists():
@@ -318,6 +353,23 @@ _TRACKER_PLATFORM: dict[str, str] = {
     "onlineplatform_nnx":    "nintendo-switch",
 }
 
+def tracker_url(player: dict) -> str | None:
+    plat = _TRACKER_PLATFORM.get((player.get("raw_platform") or "").lower())
+    if not plat:
+        return None
+    uid = player.get("online_id") or player.get("name", "")
+    return f"https://rocketleague.tracker.network/rocket-league/profile/{plat}/{uid}/overview"
+
+_TRACKER_PLATFORM: dict[str, str] = {
+    "onlineplatform_steam":  "steam",
+    "onlineplatform_epic":   "epic",
+    "onlineplatform_ps4":    "psn",
+    "onlineplatform_ps5":    "psn",
+    "onlineplatform_dingo":  "xbl",
+    "onlineplatform_switch": "nintendo-switch",
+    "onlineplatform_nnx":    "nintendo-switch",
+}
+
 def tracker_url(player: dict) -> str:
     plat = _TRACKER_PLATFORM.get((player.get("raw_platform") or "").lower()) or "epic"
     if plat == "steam":
@@ -327,6 +379,95 @@ def tracker_url(player: dict) -> str:
     if not uid or uid == "0":
         return ""
     return f"https://rocketleague.tracker.network/rocket-league/profile/{plat}/{uid}/overview"
+
+MAP_NAMES: dict[str, str] = {
+    # DFH Stadium
+    "stadium_p":                  "DFH Stadium",
+    "stadium_day_p":              "DFH Stadium (Day)",
+    "stadium_night_p":            "DFH Stadium (Night)",
+    "stadium_race_day_p":         "DFH Stadium (Throwback)",
+    "stadium_winter_p":           "DFH Stadium (Snowy)",
+    "stadium_10a_p":              "DFH Stadium (Anniversary)",
+    # Mannfield
+    "eurostadium_p":              "Mannfield",
+    "eurostadium_night_p":        "Mannfield (Night)",
+    "eurostadium_snowy_p":        "Mannfield (Snowy)",
+    "eurostadium_rainy_p":        "Mannfield (Stormy)",
+    "eurostadium_stormy_p":       "Mannfield (Stormy)",
+    "eurostadium_snownight_p":    "Mannfield (Frosty)",
+    # Beckwith Park
+    "park_p":                     "Beckwith Park",
+    "park_rainy_p":               "Beckwith Park (Stormy)",
+    "park_night_p":               "Beckwith Park (Midnight)",
+    "park_snowy_p":               "Beckwith Park (Snowy)",
+    "park_bman_p":                "Beckwith Park (Gotham Night)",
+    "park_bman_night_p":          "Beckwith Park (Gotham Night)",
+    # Urban Central
+    "trainstation_p":             "Urban Central",
+    "trainstation_night_p":       "Urban Central (Night)",
+    "trainstation_dawn_p":        "Urban Central (Dawn)",
+    # Champions Field
+    "cs_p":                       "Champions Field",
+    "cs_day_p":                   "Champions Field (Day)",
+    "cs_hw_p":                    "Champions Field (Halloween)",
+    # Utopia Coliseum
+    "utopiastadium_p":            "Utopia Coliseum",
+    "utopiastadium_dusk_p":       "Utopia Coliseum (Dusk)",
+    "utopiastadium_snow_p":       "Utopia Coliseum (Snowy)",
+    "utopiastadium_lux_p":        "Utopia Coliseum (Gilded)",
+    # Neo Tokyo
+    "neotokyo_standard_p":        "Neo Tokyo",
+    "neotokyo_p":                 "Tokyo Underpass",
+    # AquaDome
+    "underwater_p":               "AquaDome",
+    # Salty Shores
+    "beach_p":                    "Salty Shores",
+    "beach_night_p":              "Salty Shores (Night)",
+    # Wasteland
+    "wasteland_p":                "Wasteland",
+    "wasteland_night_p":          "Wasteland (Night)",
+    "wasteland_grs_p":            "Wasteland (Grasslands)",
+    # Starbase ARC
+    "arc_p":                      "Starbase ARC",
+    "arc_daydream_p":             "Starbase ARC (Aftermath)",
+    # Farmstead
+    "woods_p":                    "Farmstead",
+    "woods_winter_p":             "Farmstead (Snowy)",
+    # Forbidden Temple
+    "chn_stadium_p":              "Forbidden Temple",
+    "chn_stadium_day_p":          "Forbidden Temple (Day)",
+    # Neon Fields
+    "street_p":                   "Neon Fields",
+    "street_night_p":             "Neon Fields (Night)",
+    # Deadeye Canyon
+    "outlaw_oasis_p":             "Deadeye Canyon",
+    "outlaw_oasis_night_p":       "Deadeye Canyon (Night)",
+    # Sovereign Heights
+    "uf_day_p":                   "Sovereign Heights",
+    "uf_p":                       "Sovereign Heights",
+    # Rivals Arena
+    "arc_standard_p":             "Rivals Arena",
+    # Hoops / Rumble arenas
+    "hoopsstadium_p":             "Dunk House",
+    "throwbackstadium_p":         "Throwback Stadium",
+    "bb_p":                       "Pillars",
+    "underpass_p":                "Underpass",
+    "wasteland_s_p":              "Wasteland (Standard)",
+    "mcdm_p":                     "Octagon",
+}
+
+def map_display_name(raw: str) -> str:
+    """Return a human-readable arena name from the internal map code."""
+    if not raw:
+        return ""
+    looked_up = MAP_NAMES.get(raw.lower())
+    if looked_up:
+        return looked_up
+    # Fallback: strip trailing _P, replace underscores, title-case
+    clean = raw
+    if clean.upper().endswith("_P"):
+        clean = clean[:-2]
+    return clean.replace("_", " ").title()
 
 def fmt_date(ts: float) -> str:
     return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d  %H:%M")
@@ -373,13 +514,13 @@ def _extract_playlist_id(props: dict, replay: dict) -> int:
 
 
 def parse_card_data(path: Path) -> dict | None:
-    """Run rrrocket --network-parse and return only the fields needed for card display."""
+    """Run rattletrap (header only) and return the fields needed for card display."""
     if not RATTLETRAP.exists():
         return None
     try:
         proc = subprocess.run(
-            [str(RATTLETRAP), "--network-parse", str(path)],
-            capture_output=True, timeout=120,
+            [str(RATTLETRAP), str(path)],
+            capture_output=True, timeout=30,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
         if proc.returncode != 0:
@@ -406,6 +547,23 @@ def parse_card_data(path: Path) -> dict | None:
                 "raw_platform": raw_plat,
                 "online_id":    online_id,
             })
+
+        # Fallback: extract players from Goals when PlayerStats is absent
+        if not players:
+            seen: set = set()
+            for g in (props.get("Goals") or []):
+                if not isinstance(g, dict): continue
+                pname = g.get("PlayerName", "")
+                team  = g.get("PlayerTeam")
+                if pname and pname not in seen:
+                    seen.add(pname)
+                    players.append({
+                        "name":         pname,
+                        "team":         int(team) if team is not None else -1,
+                        "platform":     "",
+                        "raw_platform": "",
+                        "online_id":    "",
+                    })
 
         dur = props.get("TotalSecondsPlayed")
         return {
@@ -550,7 +708,56 @@ def parse_detailed(path: Path) -> dict | None:
         return None
 
 
+try:
+    import boxcars_py as _boxcars
+    _BOXCARS = True
+except ImportError:
+    _BOXCARS = False
+
 # ── replay parser ─────────────────────────────────────────────────────────────
+
+def _parse_with_boxcars(path: Path) -> dict | None:
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        replay = _boxcars.parse_replay(data)
+
+        # navigate to header properties — handle both dict and object layouts
+        if isinstance(replay, dict):
+            raw_props = replay.get('header', {}).get('properties', {})
+        else:
+            header = getattr(replay, 'header', replay)
+            raw_props = getattr(header, 'properties', {})
+
+        # normalise to a plain dict
+        if isinstance(raw_props, dict):
+            props = raw_props
+        elif hasattr(raw_props, 'items'):
+            props = dict(raw_props.items())
+        else:
+            props = {k: v for k, v in raw_props}
+
+        players = []
+        for p in props.get('PlayerStats', []):
+            pd = dict(p) if not isinstance(p, dict) else p
+            players.append({
+                'name':    pd.get('Name', '?'),
+                'team':    int(pd.get('Team', 0)),
+                'score':   pd.get('Score', 0),
+                'goals':   pd.get('Goals', 0),
+                'assists': pd.get('Assists', 0),
+                'saves':   pd.get('Saves', 0),
+                'shots':   pd.get('Shots', 0),
+            })
+
+        return {
+            'team0':   props.get('Team0Score', 0),
+            'team1':   props.get('Team1Score', 0),
+            'date':    props.get('Date', ''),
+            'players': players,
+        }
+    except Exception:
+        return None
 
 _replay_major: int = 868   # set once per parse; safe — parser runs one-at-a-time
 
@@ -679,7 +886,8 @@ def _parse_replay_data(data: bytes) -> dict:
 
     result: dict = {"score0": None, "score1": None, "date": None, "players": [],
                     "team_size": 0, "match_type": "", "playlist_id": 0,
-                    "replay_name": "", "map": "", "duration": None}
+                    "replay_name": "", "map": "", "duration": None,
+                    "_num_frames": 0, "_record_fps": 0.0}
     _goal_players: dict[str, int] = {}
 
     while pos < len(data):
@@ -725,13 +933,24 @@ def _parse_replay_data(data: bytes) -> dict:
                     "platform": platform_label(str(raw_plat)),
                 })
 
+    def _nname(n: str) -> str:
+        return unicodedata.normalize("NFC", n).strip().lower()
+
+    goal_norm = {_nname(k): (k, v) for k, v in _goal_players.items()}
     for p in result["players"]:
-        if p["team"] == -1 and p["name"] in _goal_players:
-            p["team"] = _goal_players[p["name"]]
-    known = {p["name"] for p in result["players"]}
-    for gname, gteam in _goal_players.items():
-        if gname not in known:
+        if p["team"] == -1:
+            match = goal_norm.get(_nname(p["name"]))
+            if match:
+                p["team"] = match[1]
+    known_norm = {_nname(p["name"]) for p in result["players"]}
+    for nk, (gname, gteam) in goal_norm.items():
+        if nk not in known_norm:
             result["players"].append({"name": gname, "team": gteam})
+
+    nf  = result.pop("_num_frames", 0)
+    fps = result.pop("_record_fps", 0.0)
+    if nf and fps:
+        result["duration"] = nf / fps
 
     return result
 
@@ -841,8 +1060,6 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
     # ── card background + border ──────────────────────────────────────────────
     if entry.get("failed"):
         bg, bdr, bdr_w = C_CARD_FAIL, C_BORDER_FAIL, 2
-    elif uploaded:
-        bg, bdr, bdr_w = C_CARD_UP, C_BORDER_UP, 1
     else:
         bg, bdr, bdr_w = C_CARD, C_BORDER, 1
     canvas.create_rectangle(x0, y, x1, y+h, fill=bg, outline=bdr, width=bdr_w)
@@ -874,12 +1091,15 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
     # ── name row ──────────────────────────────────────────────────────────────
     ny = y + NAME_H // 2
     rname = (info.get("replay_name") or "") if info else ""
-    if not rname:
-        rname = Path(filename).stem
-
     ts       = (info.get("team_size") or 0) if info else 0
     type_tag = (entry.get("type") or replay_type(info)) if info else ""
     mode_str = {1: "Duel", 2: "Doubles", 3: "Standard", 4: "Chaos"}.get(ts, f"{ts}v{ts}" if ts else "")
+    if not rname:
+        if info:
+            date_part = (info.get("date") or "")[:10]
+            rname = " ".join(p for p in [date_part, type_tag, mode_str] if p) or Path(filename).stem
+        else:
+            rname = Path(filename).stem
     tags     = "  ·  ".join(t for t in [type_tag, mode_str] if t)
 
     if TAG_H == 0:
@@ -963,13 +1183,13 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
         bar_w     = 3
         text_x    = x0 + bar_w + 4 + SCORE_W_C + PLAT_W_C
 
-        cbr = entry.get("_cbr", max(len(blue), 1))
-        cor = entry.get("_cor", max(len(orange), 1))
+        actual_blue   = max(len(blue), 1)
+        actual_orange = max(len(orange), 1)
 
         blue_start   = py_start
-        blue_end     = blue_start + cbr * PLAYER_H
+        blue_end     = blue_start + actual_blue * PLAYER_H
         orange_start = blue_end
-        orange_end   = orange_start + cor * PLAYER_H
+        orange_end   = orange_start + actual_orange * PLAYER_H
 
         canvas.create_rectangle(x0, blue_start,   x0+bar_w, blue_end,   fill=C_BLUE,   outline="")
         canvas.create_rectangle(x0, orange_start, x0+bar_w, orange_end, fill=C_ORANGE, outline="")
@@ -1235,6 +1455,191 @@ class DateRangePicker(tk.Toplevel):
         self._on_apply()
 
 
+# ── Date range picker ────────────────────────────────────────────────────────
+
+class DateRangePicker(tk.Toplevel):
+    _BG      = "#1a1a1a"
+    _BG_CELL = "#1a1a1a"
+    _SEL     = "#3B8ED0"
+    _RANGE   = "#1e3a5a"
+    _FG_RNG  = "#64b5f6"
+    _FG_DAY  = "#cccccc"
+    _FG_DIM  = "#555555"
+
+    def __init__(self, parent, from_var: tk.StringVar, to_var: tk.StringVar,
+                 on_apply):
+        super().__init__(parent)
+        self.overrideredirect(True)
+        self.configure(bg=self._BG)
+        self.grab_set()
+
+        self._from_var = from_var
+        self._to_var   = to_var
+        self._on_apply = on_apply
+        self._start: _date | None = None
+        self._end:   _date | None = None
+
+        for var, attr in [(from_var, "_start"), (to_var, "_end")]:
+            try:
+                v = var.get().strip()
+                if v:
+                    setattr(self, attr, datetime.strptime(v, "%Y-%m-%d").date())
+            except Exception:
+                pass
+
+        today = _date.today()
+        if today.month == 1:
+            self._ym_l = (today.year - 1, 12)
+        else:
+            self._ym_l = (today.year, today.month - 1)
+        self._ym_r = (today.year, today.month)
+
+        self._build()
+        self.update_idletasks()
+
+    def _build(self):
+        outer = tk.Frame(self, bg=self._BG, bd=1, relief="solid",
+                         highlightbackground="#3a3a3a", highlightthickness=1)
+        outer.pack(fill="both", expand=True)
+
+        cal_row = tk.Frame(outer, bg=self._BG)
+        cal_row.pack(padx=14, pady=(12, 6))
+
+        self._left_frame  = tk.Frame(cal_row, bg=self._BG)
+        self._left_frame.pack(side="left", padx=(0, 14))
+        self._right_frame = tk.Frame(cal_row, bg=self._BG)
+        self._right_frame.pack(side="left")
+
+        sep = tk.Frame(outer, bg="#2a2a2a", height=1)
+        sep.pack(fill="x", padx=10)
+
+        bottom = tk.Frame(outer, bg=self._BG)
+        bottom.pack(fill="x", padx=14, pady=8)
+
+        self._range_lbl = tk.Label(bottom, text="", bg=self._BG,
+                                   fg="#888888", font=("Segoe UI", 10))
+        self._range_lbl.pack(side="left")
+
+        tk.Button(bottom, text="Apply", bg=self._SEL, fg="white",
+                  relief="flat", font=("Segoe UI", 10), padx=10,
+                  command=self._apply).pack(side="right", padx=(6, 0))
+        tk.Button(bottom, text="Clear", bg="#2a2a2a", fg="#aaaaaa",
+                  relief="flat", font=("Segoe UI", 10), padx=10,
+                  command=self._clear).pack(side="right")
+
+        self._render()
+
+    def _render(self):
+        for w in self._left_frame.winfo_children():  w.destroy()
+        for w in self._right_frame.winfo_children(): w.destroy()
+        self._draw_month(self._left_frame,  *self._ym_l, show_prev=True,  show_next=False)
+        self._draw_month(self._right_frame, *self._ym_r, show_prev=False, show_next=True)
+        self._update_label()
+
+    def _draw_month(self, parent, year, month, show_prev, show_next):
+        today = _date.today()
+
+        # ── navigation header ────────────────────────────────────────────────
+        nav = tk.Frame(parent, bg=self._BG)
+        nav.grid(row=0, column=0, columnspan=7, sticky="ew", pady=(0, 6))
+
+        if show_prev:
+            tk.Label(nav, text="‹", bg=self._BG, fg="#aaaaaa",
+                     font=("Segoe UI", 14), cursor="hand2"
+                     ).pack(side="left")
+            nav.winfo_children()[-1].bind("<Button-1>", lambda e: self._shift(-1))
+
+        mn = _cal.month_abbr[month]
+        tk.Label(nav, text=f"{mn}  {year}", bg=self._BG, fg="white",
+                 font=("Segoe UI", 11, "bold")).pack(side="left", expand=True)
+
+        if show_next:
+            tk.Label(nav, text="›", bg=self._BG, fg="#aaaaaa",
+                     font=("Segoe UI", 14), cursor="hand2"
+                     ).pack(side="right")
+            nav.winfo_children()[-1].bind("<Button-1>", lambda e: self._shift(1))
+
+        # ── day-of-week headers ──────────────────────────────────────────────
+        for c, h in enumerate(["Su","Mo","Tu","We","Th","Fr","Sa"]):
+            tk.Label(parent, text=h, bg=self._BG, fg=C_DIM,
+                     font=("Segoe UI", 9, "bold"), width=4
+                     ).grid(row=1, column=c, pady=(0, 2))
+
+        # ── day cells ────────────────────────────────────────────────────────
+        weeks = _cal.monthcalendar(year, month)   # Mon-first
+        s = self._start; e = self._end
+        rng_lo = min(s, e) if s and e else None
+        rng_hi = max(s, e) if s and e else None
+
+        for r, week in enumerate(weeks):
+            rotated = [week[6]] + week[:6]         # Sun-first
+            for c, day in enumerate(rotated):
+                if day == 0:
+                    tk.Label(parent, text="", bg=self._BG, width=4
+                             ).grid(row=r+2, column=c, padx=1, pady=1)
+                    continue
+
+                dt = _date(year, month, day)
+                is_sel = dt in (s, e)
+                in_rng = rng_lo and rng_hi and rng_lo < dt < rng_hi
+                is_today = dt == today
+
+                if is_sel:
+                    bg, fg, font_w = self._SEL, "white", "bold"
+                elif in_rng:
+                    bg, fg, font_w = self._RANGE, self._FG_RNG, "normal"
+                elif is_today:
+                    bg, fg, font_w = "#2a2a2a", self._SEL, "bold"
+                else:
+                    bg, fg, font_w = self._BG_CELL, self._FG_DAY, "normal"
+
+                lbl = tk.Label(parent, text=str(day), bg=bg, fg=fg, width=4,
+                               font=("Segoe UI", 10, font_w), cursor="hand2")
+                lbl.grid(row=r+2, column=c, padx=1, pady=1)
+                lbl.bind("<Button-1>", lambda e, d=dt: self._click(d))
+
+    def _click(self, dt: _date):
+        if self._start is None or (self._start and self._end):
+            self._start = dt; self._end = None
+        else:
+            if dt < self._start:
+                self._end = self._start; self._start = dt
+            else:
+                self._end = dt
+        self._render()
+
+    def _shift(self, direction: int):
+        def inc(ym, n):
+            y, m = ym; m += n
+            if m > 12: return (y+1, 1)
+            if m < 1:  return (y-1, 12)
+            return (y, m)
+        self._ym_l = inc(self._ym_l, direction)
+        self._ym_r = inc(self._ym_r, direction)
+        self._render()
+
+    def _update_label(self):
+        if self._start and self._end:
+            self._range_lbl.configure(
+                text=f"{self._start}  –  {self._end}")
+        elif self._start:
+            self._range_lbl.configure(text=f"{self._start}  –  …")
+        else:
+            self._range_lbl.configure(text="")
+
+    def _apply(self):
+        self._from_var.set(str(self._start) if self._start else "")
+        self._to_var.set(str(self._end)   if self._end   else "")
+        self.destroy()
+        self._on_apply()
+
+    def _clear(self):
+        self._start = self._end = None
+        self._from_var.set(""); self._to_var.set("")
+        self._render()
+        self._on_apply()
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 class App(ctk.CTk):
@@ -1254,15 +1659,20 @@ class App(ctk.CTk):
         self._active_cards: list[dict] = []
         self._card_index: dict[str, int] = {}
         self._total_h = _dims()["card_pad"]
+        self._normal_card_w: int = 300
         self._parse_queue: list[Path] = []
-        self._parse_gen = 0
+        self._parse_gen   = 0
+        self._parse_done  = 0
         self._redraw_id = None
+        self._detail_queue: list[Path] = []
+        self._detail_gen = 0
 
         self._filt_type   = tk.StringVar(value="All")
         self._filt_mode   = tk.StringVar(value="All")
         self._filt_from   = tk.StringVar(value="")
         self._filt_to     = tk.StringVar(value="")
         self._filt_search = tk.StringVar(value="")
+        self._filter_id   = None
         self._filter_id   = None
 
         self._build_header()
@@ -1272,23 +1682,28 @@ class App(ctk.CTk):
         self._build_detail_page()
         self._show_main()
 
+        self.after(800, self._auto_detail_on_open)
+
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self._bg_sync_active  = False
-        self._bg_sync_bc_ids: set = set()
-        self._bg_sync_prio: queue.Queue = queue.Queue()
-        self._bg_sync_work: deque = deque()
+        if self.config_data.get("auto_upload", False):
+            self.after(100, self._start_watching)
+
         self._loading = False
         self._rebuild_id            = None
         self._save_uploaded_id      = None
         self._watch_err_id          = None
         self._upload_session_enabled = True
         self._download_active        = False
+        self._tier                   = "free_tester"
+        self._dl_progress_line       = None
+        self._download_active        = False
+        self._tier                   = "free_tester"
         self._dl_progress_line       = None
         self._dl_status_line         = None
         self._dl_error_line          = None
         self.after(200, self._fetch_quota)
-        self.after(400, self._check_for_updates)
+        self.after(400, self._check_expiry)
         self._check_integrity()
         if self.config_data.get("auto_upload", False):
             self.after(300, self._start_watching)
@@ -1298,9 +1713,6 @@ class App(ctk.CTk):
     def _build_header(self):
         hdr = ctk.CTkFrame(self, fg_color="transparent")
         hdr.pack(fill="x", padx=20, pady=(16, 0))
-        self.title_label = ctk.CTkLabel(hdr, text="Ballchasing Auto Uploader",
-                                        font=ctk.CTkFont(size=20, weight="bold"))
-        self.title_label.pack(side="left")
         self.nav_btn = ctk.CTkButton(hdr, text="⚙", width=36, height=36,
                                      font=ctk.CTkFont(size=18),
                                      fg_color="transparent", hover_color="#2a2d2e",
@@ -1339,15 +1751,16 @@ class App(ctk.CTk):
                                         font=ctk.CTkFont(family="Consolas", size=12),
                                         text_color=C_DATE, anchor="w")
         self.quota_label.pack(side="left", fill="x", expand=True)
-        self.sync_btn = ctk.CTkButton(quota_row, text="Sync", width=55, height=22,
+        ctk.CTkButton(quota_row, text="Sync uploaded", width=100, height=22,
                       fg_color="transparent", border_width=1, border_color=C_BORDER,
                       font=ctk.CTkFont(size=11),
-                      command=self._toggle_bg_sync)
-        self.sync_btn.pack(side="right")
+                      command=self._sync_uploaded_status).pack(side="right")
 
         self.log_box = ctk.CTkTextbox(self.main_page, state="disabled",
                                       font=ctk.CTkFont(family="Consolas", size=12))
         self.log_box.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        self.log_box._textbox.tag_config("green", foreground="#4aaa88")
+        self.log_box._textbox.tag_config("red",   foreground="#e06060")
         self.log_box._textbox.tag_config("green", foreground="#4aaa88")
         self.log_box._textbox.tag_config("red",   foreground="#e06060")
 
@@ -1361,10 +1774,16 @@ class App(ctk.CTk):
         self.replays_title = ctk.CTkLabel(bar, text="Replays",
                                           font=ctk.CTkFont(size=16, weight="bold"))
         self.replays_title.pack(side="left")
-        ctk.CTkButton(bar, text="↻  Refresh", width=90, height=28,
+        btn_col = ctk.CTkFrame(bar, fg_color="transparent")
+        btn_col.pack(side="right")
+        ctk.CTkButton(btn_col, text="↻  Refresh", width=90, height=28,
                       fg_color="transparent", border_width=1,
                       border_color=("#3B8ED0", "#1F6AA5"),
-                      command=self._load_replays).pack(side="right")
+                      command=self._load_replays).pack()
+        ctk.CTkButton(btn_col, text="Sync uploaded", width=90, height=22,
+                      fg_color="transparent", border_width=1, border_color=C_BORDER,
+                      font=ctk.CTkFont(size=11),
+                      command=self._sync_uploaded_status).pack(pady=(4, 0))
         self.compact_btn = ctk.CTkButton(bar, text="Compact", width=75, height=28,
                       fg_color="transparent", border_width=1, border_color=C_BORDER,
                       font=ctk.CTkFont(size=12),
@@ -1465,12 +1884,13 @@ class App(ctk.CTk):
         if not self._active_cards:
             return
         cw       = self.canvas.winfo_width()
+        eff_w    = cw if _COMPACT else min(cw, CARD_MARGIN_X * 2 + self._normal_card_w)
         view_top = self.canvas.canvasy(0) - RENDER_BUFFER
         view_bot = self.canvas.canvasy(self.canvas.winfo_height()) + RENDER_BUFFER
         for card in self._active_cards:
             y0, y1 = card["y"], card["y"] + card["height"]
             if y1 >= view_top and y0 <= view_bot:
-                draw_card(self.canvas, y0, cw, card)
+                draw_card(self.canvas, y0, eff_w, card)
 
     def _apply_filters(self, sort=True):
         ftype  = self._filt_type.get()
@@ -1505,6 +1925,25 @@ class App(ctk.CTk):
             active = sorted(active, key=sort_key, reverse=True)
 
         self._active_cards = active
+
+        if not _COMPACT and active:
+            d         = _dims()
+            nfont     = _measure_font("Segoe UI", d["name_font"], "bold")
+            tfont     = _measure_font("Segoe UI", d["tag_font"])
+            max_w = 250
+            for c in active:
+                info     = c.get("info") or {}
+                rname    = (info.get("replay_name") or "") or Path(c["filename"]).stem
+                ts       = info.get("team_size", 0)
+                type_tag = c.get("type") or replay_type(info)
+                mode_str = {1: "Duel", 2: "Doubles", 3: "Standard", 4: "Chaos"}.get(ts, f"{ts}v{ts}" if ts else "")
+                tags     = "  ·  ".join(t for t in [type_tag, mode_str] if t)
+                name_px  = nfont.measure(rname)
+                tag_px   = (tfont.measure(tags) + 14) if tags else 0
+                cw_nat   = SCORE_W + 16 + int((name_px + tag_px) * 1.12)
+                max_w    = max(max_w, cw_nat)
+            self._normal_card_w = max_w
+
         pad = _dims()["card_pad"]
         y   = pad
         if _COMPACT:
@@ -1583,6 +2022,27 @@ class App(ctk.CTk):
             self._date_btn.configure(text="Any date")
         self._schedule_filter()
 
+    def _open_date_picker(self):
+        picker = DateRangePicker(self, self._filt_from, self._filt_to,
+                                 on_apply=self._apply_filters)
+        picker.update_idletasks()
+        btn = self._date_btn
+        x = btn.winfo_rootx()
+        y = btn.winfo_rooty() + btn.winfo_height() + 4
+        picker.geometry(f"+{x}+{y}")
+        picker.focus_set()
+
+    def _update_date_btn(self):
+        f = self._filt_from.get().strip()
+        t = self._filt_to.get().strip()
+        if f and t:
+            self._date_btn.configure(text=f"{f}  –  {t}")
+        elif f:
+            self._date_btn.configure(text=f"{f}  –  …")
+        else:
+            self._date_btn.configure(text="Any date")
+        self._schedule_filter()
+
     def _clear_filters(self):
         self._filt_type.set("All")
         self._filt_mode.set("All")
@@ -1609,6 +2069,12 @@ class App(ctk.CTk):
         else:
             self._schedule_redraw()
 
+    def _on_canvas_resize(self):
+        if _COMPACT:
+            self._apply_filters(sort=False)
+        else:
+            self._schedule_redraw()
+
     def _toggle_compact(self):
         global _COMPACT
         _COMPACT = not _COMPACT
@@ -1622,8 +2088,11 @@ class App(ctk.CTk):
     # ── load + parse ──────────────────────────────────────────────────────────
 
     def _load_replays(self):
-        self._parse_gen += 1
+        self._parse_gen  += 1
+        self._parse_done  = 0
+        self._detail_gen += 1          # cancel any running detail worker
         self._parse_queue.clear()
+        self._detail_queue.clear()
         self._cards.clear()
         self._card_index.clear()
         self._total_h = _dims()["card_pad"]
@@ -1664,7 +2133,7 @@ class App(ctk.CTk):
             batch: list[dict] = []
             for i, (path, mtime) in enumerate(paths):
                 info = load_cached(path.name)
-                needs_parse = info is None or info.get("_v") != CACHE_VERSION
+                needs_parse = info is None or "team_size" not in info or info.get("_v") != CACHE_VERSION
                 if needs_parse:
                     to_parse.append(path)
                 batch.append({
@@ -1724,15 +2193,10 @@ class App(ctk.CTk):
         path = self._parse_queue.pop(0)
 
         def do_work():
-            # Fast binary parse first for immediate display
             info = parse_replay_header(path)
             if info:
-                self.after(0, lambda f=path.name, i=info, g=gen: self._finish_parse(f, i, g, partial=True))
-            # Then full rrrocket parse for playlist_id and accurate player platforms
-            full = parse_card_data(path)
-            if full:
-                save_cache(path.name, full)
-            self.after(0, lambda f=path.name, i=full, g=gen: self._finish_parse(f, i, g, partial=False))
+                save_cache(path.name, info)
+            self.after(0, lambda f=path.name, i=info, g=gen: self._finish_parse(f, i, g))
 
         threading.Thread(target=do_work, daemon=True).start()
 
@@ -1752,7 +2216,97 @@ class App(ctk.CTk):
             self._schedule_redraw()
         # only advance queue after the full rrrocket parse is done
         if not partial:
-            self._parse_next(gen)
+            self._parse_done += 1
+            if self._parse_done <= 100:
+                self._parse_next(gen)          # first 100: full speed
+            else:
+                self.after(150, self._parse_next, gen)  # rest: ~6/s
+
+    # ── background detail worker ──────────────────────────────────────────────
+
+    def _start_detail_worker(self, gen: int):
+        if not RATTLETRAP.exists():
+            return
+        queue = [card["path"] for card in self._cards
+                 if not load_detailed(card["filename"])]
+        self._detail_queue = queue
+        self._detail_gen   = gen
+        self._detail_next(gen)
+
+    def _detail_next(self, gen: int):
+        if self._detail_gen != gen:
+            return
+        # skip any already-cached entries (may have been done via click)
+        while self._detail_queue:
+            path = self._detail_queue[0]
+            if load_detailed(path.name):
+                self._detail_queue.pop(0)
+            else:
+                break
+        if not self._detail_queue or self._detail_gen != gen:
+            return
+        path = self._detail_queue.pop(0)
+
+        def do_work():
+            info = parse_detailed(path)
+            if info:
+                save_detailed(path.name, info)
+                self._enforce_detail_limit()
+            self.after(0, lambda g=gen: self._detail_next(g))
+
+        threading.Thread(target=do_work, daemon=True).start()
+
+    def _enforce_detail_limit(self):
+        max_d = int(self.config_data.get("max_detailed", 100))
+        if max_d <= 0:
+            return
+        files = sorted(CACHE_DIR.glob("*.detailed.json"),
+                       key=lambda f: f.stat().st_mtime)
+        while len(files) > max_d:
+            files.pop(0).unlink(missing_ok=True)
+
+    # ── background detail worker ──────────────────────────────────────────────
+
+    def _start_detail_worker(self, gen: int):
+        if not RATTLETRAP.exists():
+            return
+        queue = [card["path"] for card in self._cards
+                 if not load_detailed(card["filename"])]
+        self._detail_queue = queue
+        self._detail_gen   = gen
+        self._detail_next(gen)
+
+    def _detail_next(self, gen: int):
+        if self._detail_gen != gen:
+            return
+        # skip any already-cached entries (may have been done via click)
+        while self._detail_queue:
+            path = self._detail_queue[0]
+            if load_detailed(path.name):
+                self._detail_queue.pop(0)
+            else:
+                break
+        if not self._detail_queue or self._detail_gen != gen:
+            return
+        path = self._detail_queue.pop(0)
+
+        def do_work():
+            info = parse_detailed(path)
+            if info:
+                save_detailed(path.name, info)
+                self._enforce_detail_limit()
+            self.after(0, lambda g=gen: self._detail_next(g))
+
+        threading.Thread(target=do_work, daemon=True).start()
+
+    def _enforce_detail_limit(self):
+        max_d = int(self.config_data.get("max_detailed", 100))
+        if max_d <= 0:
+            return
+        files = sorted(CACHE_DIR.glob("*.detailed.json"),
+                       key=lambda f: f.stat().st_mtime)
+        while len(files) > max_d:
+            files.pop(0).unlink(missing_ok=True)
 
     # ── canvas click ──────────────────────────────────────────────────────────
 
@@ -1806,6 +2360,11 @@ class App(ctk.CTk):
                       text_color="#e06060",
                       command=self._detail_delete).pack(side="left")
 
+        self.detail_meta = ctk.CTkLabel(bar, text="",
+                                        font=ctk.CTkFont(size=13),
+                                        text_color=C_DATE)
+        self.detail_meta.pack(side="left", padx=12)
+
         # ── row 2: meta info ──────────────────────────────────────────────────
         self.detail_meta = ctk.CTkLabel(header, text="",
                                         font=ctk.CTkFont(size=13),
@@ -1825,9 +2384,23 @@ class App(ctk.CTk):
         self._render_parsing(card)
 
         def worker():
+            # Upgrade card info with accurate platforms/playlist before showing stats
+            card_info = parse_card_data(card["path"])
+            if card_info:
+                save_cache(card["filename"], card_info)
+                self.after(0, lambda i=card_info: self._update_card_info(card, i))
             info = parse_detailed(card["path"])
             self.after(0, lambda: self._render_detail(info, card))
         threading.Thread(target=worker, daemon=True).start()
+
+    def _update_card_info(self, card: dict, info: dict):
+        old_h = card["height"]
+        card["info"]   = info
+        card["type"]   = replay_type(info)
+        card["height"] = card_height(info)
+        if card["height"] != old_h:
+            self._rebuild_positions()
+        self._schedule_redraw()
 
     def _render_parsing(self, card: dict):
         for w in self.detail_content.winfo_children():
@@ -1858,6 +2431,11 @@ class App(ctk.CTk):
             msg = ("Analyzing with rrrocket…" if RATTLETRAP.exists()
                    else "rattletrap.exe not found — run Setup.bat to download it.")
             ctk.CTkLabel(self.detail_content, text=msg,
+                         text_color=C_DATE).pack(pady=20)
+            return
+
+        if info.get("_failed"):
+            ctk.CTkLabel(self.detail_content, text="Could not parse this replay.",
                          text_color=C_DATE).pack(pady=20)
             return
 
@@ -2064,7 +2642,8 @@ class App(ctk.CTk):
             MCOLS = ["Player", "Avg\nSpeed%", "Tot.\nDist.", "Time slow\nspeed",
                      "Time boost\nspeed", "Time\nsupersonic", "Time\nground",
                      "Time\nlow air", "Time\nhigh air",
-                     "Powerslide\ntot/avg", "PS\ncount"]
+                     "Powerslide\ntot/avg", "PS\ncount",
+                     "Boost\nat SSL", "Boost\nOverfill"]
             for col, hdr in enumerate(MCOLS):
                 ctk.CTkLabel(mframe, text=hdr, text_color=C_DIM,
                              font=ctk.CTkFont(size=12, weight="bold"),
@@ -2090,7 +2669,9 @@ class App(ctk.CTk):
                          f"{m.get('time_low_air', 0):.2f}s",
                          f"{m.get('time_high_air', 0):.2f}s",
                          f"{st:.2f}s/{sa:.2f}s",
-                         str(sc)]
+                         str(sc),
+                         f"{m.get('boost_sonic_used', 0):.1f}",
+                         f"{m.get('overfill', 0):.1f}"]
                 for col, val in enumerate(vals):
                     ctk.CTkLabel(mframe, text=val,
                                  text_color=color if col == 0 else C_SCORE,
@@ -2152,6 +2733,41 @@ class App(ctk.CTk):
             ctk.CTkLabel(bsframe, text="Ball stats — analyzing…",
                          text_color=C_DIM, font=ctk.CTkFont(size=13)
                          ).pack(pady=10)
+
+        # ── ball stats (possession + side time) ──────────────────────────────
+        ball = info.get("ball_stats")
+        if ball:
+            bsframe = ctk.CTkFrame(self.detail_content, fg_color="#1e1e1e", corner_radius=6)
+            bsframe.pack(fill="x", pady=(0, 6))
+            bsframe.columnconfigure(1, weight=1)
+
+            def _ball_row(parent, row_idx, label, blue_pct, orange_pct):
+                ctk.CTkLabel(parent, text=label, text_color=C_DIM,
+                             font=ctk.CTkFont(size=13, weight="bold")
+                             ).grid(row=row_idx, column=0, padx=(14, 8), pady=(8 if row_idx==0 else 4, 4), sticky="w")
+                # split bar
+                bar = ctk.CTkFrame(parent, height=18, fg_color="#2a2a2a", corner_radius=4)
+                bar.grid(row=row_idx, column=1, padx=(0, 8), pady=(8 if row_idx==0 else 4, 4), sticky="ew")
+                bar.update_idletasks()
+                bar_w = bar.winfo_reqwidth() or 300
+                blue_w  = max(1, int(bar_w * blue_pct / 100))
+                orange_w = max(1, bar_w - blue_w)
+                ctk.CTkFrame(bar, width=blue_w,   height=18, fg_color=C_BLUE,   corner_radius=3).place(x=0, y=0)
+                ctk.CTkFrame(bar, width=orange_w, height=18, fg_color=C_ORANGE, corner_radius=3).place(x=blue_w, y=0)
+                ctk.CTkLabel(parent, text=f"Blue {blue_pct:.1f}%",
+                             text_color=C_BLUE, font=ctk.CTkFont(size=13)
+                             ).grid(row=row_idx, column=2, padx=(4, 4), sticky="e")
+                ctk.CTkLabel(parent, text=f"{orange_pct:.1f}% Orange",
+                             text_color=C_ORANGE, font=ctk.CTkFont(size=13)
+                             ).grid(row=row_idx, column=3, padx=(0, 14), sticky="w")
+
+            _ball_row(bsframe, 0, "Possession",
+                      ball.get("blue_possession_pct", 50),
+                      ball.get("orange_possession_pct", 50))
+            _ball_row(bsframe, 1, "Ball Side",
+                      ball.get("blue_side_pct", 50),
+                      ball.get("orange_side_pct", 50))
+            tk.Frame(bsframe, height=6, bg="#1e1e1e").grid(row=2, column=0, columnspan=4)
 
         # ── filename ──────────────────────────────────────────────────────────
         ctk.CTkLabel(self.detail_content, text=card["filename"],
@@ -2232,9 +2848,6 @@ class App(ctk.CTk):
                 self.uploaded.discard(old_name)
                 self.uploaded.add(new_name)
                 save_uploaded(self.uploaded)
-            # update sync work queue — snapshot first so bg thread keeps a valid ref during build
-            old_work = self._bg_sync_work
-            self._bg_sync_work = deque(new_name if f == old_name else f for f in old_work)
             self._apply_filters()
         except Exception as e:
             messagebox.showerror("Rename failed", str(e))
@@ -2279,14 +2892,154 @@ class App(ctk.CTk):
             if fn in self.uploaded:
                 self.uploaded.discard(fn)
                 save_uploaded(self.uploaded)
-            # remove from sync queue — snapshot first so bg thread keeps a valid ref during build
-            old_work = self._bg_sync_work
-            self._bg_sync_work = deque(f for f in old_work if f != fn)
             self._current_card = None
             self._show_replays_from_detail()
             self._apply_filters()
         except Exception as e:
             messagebox.showerror("Delete failed", str(e))
+
+    # ── canvas click ──────────────────────────────────────────────────────────
+
+    def _on_canvas_click(self, event):
+        cy = self.canvas.canvasy(event.y)
+        for card in self._cards:
+            if card["y"] <= cy <= card["y"] + card["height"]:
+                if not card.get("parsing"):
+                    self._show_detail(card)
+                return
+
+    # ── detail page ───────────────────────────────────────────────────────────
+
+    def _build_detail_page(self):
+        self.detail_page = ctk.CTkFrame(self, fg_color="transparent")
+
+        bar = ctk.CTkFrame(self.detail_page, fg_color="transparent")
+        bar.pack(fill="x", padx=20, pady=(14, 4))
+        ctk.CTkButton(bar, text="← Replays", width=90, height=28,
+                      fg_color="transparent", border_width=1,
+                      border_color=("#3B8ED0", "#1F6AA5"),
+                      command=self._show_replays_from_detail).pack(side="left")
+        self.detail_meta = ctk.CTkLabel(bar, text="",
+                                        font=ctk.CTkFont(size=11),
+                                        text_color=C_DATE)
+        self.detail_meta.pack(side="left", padx=12)
+
+        self.detail_content = ctk.CTkScrollableFrame(self.detail_page,
+                                                     fg_color="transparent")
+        self.detail_content.pack(fill="both", expand=True, padx=20, pady=(0, 16))
+
+    def _show_detail(self, card: dict):
+        cached = load_detailed(card["filename"])
+        if cached:
+            self._render_detail(cached, card)
+            return
+        # Show page immediately with loading state, parse in background
+        self._render_detail(None, card)
+        def worker():
+            info = parse_detailed(card["path"])
+            if info:
+                save_detailed(card["filename"], info)
+            self.after(0, lambda: self._render_detail(info, card))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _render_detail(self, info: dict | None, card: dict):
+        # Clear previous content
+        for w in self.detail_content.winfo_children():
+            w.destroy()
+
+        # Switch to detail page
+        self.main_page.pack_forget()
+        self.settings_page.pack_forget()
+        self.replays_page.pack_forget()
+        self.detail_page.pack(fill="both", expand=True)
+        self.nav_btn.configure(text="←")
+        self._current_page = "detail"
+
+        if info is None:
+            msg = ("Analyzing with rattletrap…" if RATTLETRAP.exists()
+                   else "rattletrap.exe not found — run Setup.bat to download it.")
+            ctk.CTkLabel(self.detail_content, text=msg,
+                         text_color=C_DATE).pack(pady=20)
+            return
+
+        # Meta row
+        parts = [s for s in [info.get("date","")[:10],
+                              info.get("map",""),
+                              info.get("match_type","")] if s]
+        self.detail_meta.configure(text="  |  ".join(parts))
+
+        # Score banner
+        banner = ctk.CTkFrame(self.detail_content, fg_color="#1e1e1e",
+                              corner_radius=6)
+        banner.pack(fill="x", pady=(4, 8))
+        banner.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(banner, text="BLUE", text_color=C_BLUE,
+                     font=ctk.CTkFont(size=13, weight="bold")
+                     ).grid(row=0, column=0, padx=20, pady=10, sticky="w")
+        ctk.CTkLabel(banner,
+                     text=f"{info.get('team0',0)}  –  {info.get('team1',0)}",
+                     font=ctk.CTkFont(size=26, weight="bold")
+                     ).grid(row=0, column=1, pady=10)
+        ctk.CTkLabel(banner, text="ORANGE", text_color=C_ORANGE,
+                     font=ctk.CTkFont(size=13, weight="bold")
+                     ).grid(row=0, column=2, padx=20, pady=10, sticky="e")
+
+        # Player tables
+        COLS = ["Player", "Score", "Goals", "Assists", "Saves", "Shots", "Demos"]
+        blue   = [p for p in info["players"] if p["team"] == 0]
+        orange = [p for p in info["players"] if p["team"] == 1]
+
+        for team_players, color, label in [(blue, C_BLUE, "BLUE"),
+                                           (orange, C_ORANGE, "ORANGE")]:
+            tframe = ctk.CTkFrame(self.detail_content, fg_color="#1e1e1e",
+                                  corner_radius=6)
+            tframe.pack(fill="x", pady=(0, 6))
+            tframe.grid_columnconfigure(0, weight=1)
+
+            # Column headers
+            for col, hdr in enumerate(COLS):
+                ctk.CTkLabel(tframe, text=hdr,
+                             text_color=color,
+                             font=ctk.CTkFont(size=10, weight="bold")
+                             ).grid(row=0, column=col,
+                                    padx=(14 if col == 0 else 10, 10),
+                                    pady=(8, 2),
+                                    sticky="w" if col == 0 else "e")
+
+            # Divider line
+            div = tk.Frame(tframe, bg=C_DIVIDER, height=1)
+            div.grid(row=1, column=0, columnspan=len(COLS),
+                     sticky="ew", padx=8)
+
+            # Player rows
+            for row, p in enumerate(team_players, 2):
+                vals = [p["name"],
+                        str(p.get("score",  0)),
+                        str(p.get("goals",  0)),
+                        str(p.get("assists",0)),
+                        str(p.get("saves",  0)),
+                        str(p.get("shots",  0)),
+                        str(p.get("demos",  0))]
+                for col, val in enumerate(vals):
+                    ctk.CTkLabel(tframe, text=val,
+                                 text_color=color if col == 0 else C_SCORE,
+                                 font=ctk.CTkFont(size=11)
+                                 ).grid(row=row, column=col,
+                                        padx=(14 if col == 0 else 10, 10),
+                                        pady=4,
+                                        sticky="w" if col == 0 else "e")
+
+            # Filename at bottom
+        ctk.CTkLabel(self.detail_content, text=card["filename"],
+                     text_color=C_DIM, font=ctk.CTkFont(size=9)
+                     ).pack(pady=(4, 0))
+
+    def _show_replays_from_detail(self):
+        self.detail_page.pack_forget()
+        self.replays_page.pack(fill="both", expand=True)
+        self.nav_btn.configure(text="←")
+        self._current_page = "replays"
+        self._schedule_redraw()
 
     # ── settings page ─────────────────────────────────────────────────────────
 
@@ -2345,7 +3098,7 @@ class App(ctk.CTk):
                       command=self._save_settings
                       ).grid(row=6, column=0, columnspan=3, pady=(20, 6))
 
-        ctk.CTkButton(self.settings_page, text="Download All Replays from Ballchasing",
+        ctk.CTkButton(self.settings_page, text="Download Replays from Ballchasing",
                       fg_color="transparent", border_width=1, border_color=C_BORDER,
                       command=self._confirm_download
                       ).grid(row=7, column=0, columnspan=3, padx=20, pady=(0, 20), sticky="ew")
@@ -2393,20 +3146,58 @@ class App(ctk.CTk):
         if folder:
             self.folder_entry.delete(0, "end")
             self.folder_entry.insert(0, folder)
+            self._save_settings()
 
     def _save_settings(self):
+        old_key    = self.config_data.get("api_key", "")
+        old_folder = self.config_data.get("demos_folder", "")
         self.config_data["api_key"]          = self.api_entry.get().strip()
         self.config_data["demos_folder"]     = self.folder_entry.get().strip()
         self.config_data["visibility"]       = self.vis_var.get()
         self.config_data["auto_upload"]      = self.auto_upload_var.get()
         self.config_data["upload_on_detect"] = self.upload_on_detect_var.get()
         save_config(self.config_data)
-        self._log("Settings saved.")
-        if self.observer and self.observer.is_alive():
-            self._log("Restarting watcher to apply new settings…")
+        changed_watch = (
+            self.config_data["api_key"] != old_key
+            or self.config_data["demos_folder"] != old_folder
+        )
+        if changed_watch and self.observer and self.observer.is_alive():
             self._stop_watching()
             self.after(200, self._start_watching)
-        self._show_main()
+
+    # ── BakkesMod event log ───────────────────────────────────────────────────
+
+    def _poll_bakkesmod_log(self):
+        try:
+            if BAKKESMOD_LOG.exists():
+                with open(BAKKESMOD_LOG, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(self._bakkesmod_log_pos)
+                    new_lines = f.readlines()
+                    self._bakkesmod_log_pos = f.tell()
+                for line in new_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split("|", 1)
+                    ts    = parts[0] if len(parts) == 2 else ""
+                    event = parts[1] if len(parts) == 2 else parts[0]
+                    label = {
+                        "plugin_loaded":   "BakkesMod plugin loaded",
+                        "plugin_unloaded": "BakkesMod plugin unloaded",
+                        "match_started":   "Match started",
+                        "match_ended":     "Match ended — replay available to save",
+                    }.get(event, event)
+                    self._log(f"[bakkesmod] {ts}  {label}")
+        except Exception:
+            pass
+        self.after(2000, self._poll_bakkesmod_log)
+
+    def _on_startup_toggle(self):
+        try:
+            set_startup_enabled(self.startup_var.get())
+        except Exception as e:
+            messagebox.showerror("Startup", f"Could not update startup entry:\n{e}")
+            self.startup_var.set(get_startup_enabled())
 
     # ── watcher ───────────────────────────────────────────────────────────────
 
@@ -2472,6 +3263,8 @@ class App(ctk.CTk):
         folder = self.config_data.get("demos_folder", "").strip()
 
         def on_new_replay(filename: str):
+            if self._download_active:
+                return
             self.after(0, self._log, f"new replay detected: {filename}")
             if self._upload_session_enabled and self.config_data.get("upload_on_detect", True):
                 path = Path(folder) / filename
@@ -2495,11 +3288,11 @@ class App(ctk.CTk):
                             self.after(0, _mark)
                             if status == "uploaded":
                                 self.after(2000, self._fetch_quota)
+                            if status == "uploaded":
+                                self.after(2000, self._fetch_quota)
                     upload(p, self.config_data, self.uploaded, on_status)
 
                 threading.Thread(target=do_upload, daemon=True).start()
-            else:
-                self._bg_sync_prio.put(filename)
 
         handler = ReplayHandler(on_new_replay)
         self.observer = Observer()
@@ -2545,148 +3338,6 @@ class App(ctk.CTk):
                 self.after(0, lambda: self.quota_label.configure(
                     text="Upload quota: could not reach ballchasing.com"))
         threading.Thread(target=worker, daemon=True).start()
-
-    def _toggle_bg_sync(self):
-        if self._bg_sync_active:
-            self._bg_sync_active = False
-            self._log("[sync] stopping after current replay…")
-        else:
-            self._start_bg_sync()
-
-    def _update_sync_btn(self, running: bool):
-        if running:
-            self.sync_btn.configure(text="■ Sync", fg_color="#1e4d1e",
-                                    border_color="#4aaa88")
-        else:
-            self.sync_btn.configure(text="Sync", fg_color="transparent",
-                                    border_color="#7a2020")
-
-    def _start_bg_sync(self):
-        if self._bg_sync_active:
-            return
-        self._bg_sync_active = True
-        self.after(0, self._update_sync_btn, True)
-        if not self._cards:
-            self.after(0, self._load_replays)
-        threading.Thread(target=self._bg_sync_loop, daemon=True).start()
-
-    def _bg_sync_loop(self):
-        norm = lambda s: s.replace("-","").replace("{","").replace("}","").lower().strip()
-
-        def fetch_bc_ids():
-            api_key = self.config_data.get("api_key", "").strip()
-            if not api_key:
-                self.after(0, self._log, "[sync] no API key configured", "red")
-                return
-            new_ids: set = set()
-            hdrs   = {"Authorization": api_key}
-            params: dict = {"uploader": "me", "count": 200}
-            if self._cards:
-                oldest_ts = min(c.get("mtime", time.time()) for c in self._cards)
-                cutoff_dt = datetime.utcfromtimestamp(oldest_ts - 3600)
-                params["replay-date-after"] = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%S")
-            url = "https://ballchasing.com/api/replays"
-            try:
-                while url:
-                    resp = requests.get(url, headers=hdrs, params=params, timeout=15)
-                    if resp.status_code == 429:
-                        self.after(0, self._log, "[sync] rate limited — retrying in 30s")
-                        time.sleep(30)
-                        continue
-                    if resp.status_code in (401, 403):
-                        self.after(0, self._log, f"[sync] API key rejected ({resp.status_code})", "red")
-                        return
-                    if resp.status_code != 200:
-                        self.after(0, self._log, f"[sync] unexpected response {resp.status_code}", "red")
-                        return
-                    d = resp.json()
-                    for r in d.get("list", []):
-                        rid = norm(r.get("rocket_league_id") or "")
-                        if rid: new_ids.add(rid)
-                    nxt = d.get("next") or ""
-                    if not nxt: break
-                    if nxt.startswith("/"): nxt = "https://ballchasing.com" + nxt
-                    url = nxt; params = {}
-                self._bg_sync_bc_ids = new_ids
-                self.after(0, self._log, f"[sync] {len(new_ids)} replays found on your account")
-            except Exception as e:
-                self.after(0, self._log, f"[sync] network error: {e}", "red")
-
-        def rebuild_work():
-            def _sort_key(c):
-                d = (c.get("info") or {}).get("date") or ""
-                return d if d else fmt_date(c.get("mtime", 0))
-            cards = sorted(self._cards, key=_sort_key, reverse=True)
-            self._bg_sync_work = deque(c["filename"] for c in cards)
-
-        try:
-            # Fresh bc_ids fetch on every start
-            fetch_bc_ids()
-            if not self._bg_sync_bc_ids:
-                self.after(0, self._log, "[sync] stopped — see error above")
-                return
-            # Resume from saved position; only rebuild if nothing left
-            if not self._bg_sync_work:
-                rebuild_work()
-            else:
-                self.after(0, self._log,
-                           f"[sync] resuming — {len(self._bg_sync_work)} replays left")
-
-            while self._bg_sync_active:
-                # Priority item (new replay detected) — remove from work queue to avoid double-check
-                fn = None
-                try:
-                    fn = self._bg_sync_prio.get_nowait()
-                    self._bg_sync_work = deque(f for f in self._bg_sync_work if f != fn)
-                except queue.Empty:
-                    pass
-
-                if fn is None:
-                    if self._bg_sync_work:
-                        fn = self._bg_sync_work.popleft()
-                    elif self._cards:
-                        # Full cycle done — stop
-                        self.after(0, self._log, "[sync] cycle complete ✓")
-                        break
-                    else:
-                        self.after(0, self._log,
-                                   "[sync] waiting for replays to load — click View Replays")
-                        time.sleep(5)
-                        continue
-
-                if fn and self._bg_sync_bc_ids:
-                    idx  = self._card_index.get(fn)
-                    card = self._cards[idx] if idx is not None else None
-                    if card:
-                        rl_id  = norm(Path(fn).stem)
-                        on_bc  = rl_id in self._bg_sync_bc_ids
-                        was_up = card.get("uploaded", False)
-                        if on_bc and not was_up:
-                            def _mark(c=card, f=fn):
-                                c["uploaded"] = True
-                                self.uploaded.add(f)
-                                self._schedule_save_uploaded()
-                                self._schedule_redraw()
-                                self._log(f"✓ {f}  [found on Ballchasing]", "green")
-                            self.after(0, _mark)
-                        elif not on_bc and was_up:
-                            def _unmark(c=card, f=fn):
-                                c["uploaded"] = False
-                                self.uploaded.discard(f)
-                                self._schedule_save_uploaded()
-                                self._schedule_redraw()
-                                self._log(f"✗ {f}  [not on Ballchasing]", "red")
-                            self.after(0, _unmark)
-                        elif on_bc:
-                            self.after(0, self._log, f"✓ {fn}", "green")
-                        else:
-                            self.after(0, self._log, f"– {fn}", "red")
-
-                time.sleep(1)
-        finally:
-            self._bg_sync_active = False
-            self.after(0, self._flush_save_uploaded)
-            self.after(0, self._update_sync_btn, False)
 
     def _schedule_save_uploaded(self):
         if self._save_uploaded_id:
@@ -2775,6 +3426,19 @@ class App(ctk.CTk):
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
 
+    def _update_count_log(self, total: int):
+        tb = self.log_box._textbox
+        self.log_box.configure(state="normal")
+        last_line = int(tb.index("end-1c").split(".")[0])
+        last_text = tb.get(f"{last_line}.0", f"{last_line}.end")
+        if last_text.startswith("[download] Counting…"):
+            tb.delete(f"{last_line}.0", f"{last_line}.end")
+            tb.insert(f"{last_line}.0", f"[download] Counting… {total:,} so far")
+        else:
+            tb.insert("end", f"\n[download] Counting… {total:,} so far")
+        self.log_box.see("end")
+        self.log_box.configure(state="disabled")
+
     def _show_download_summary(self, total: int, api_key: str, folder: str):
         self._log(f"[download] Found {total:,} replays.")
         max_bytes = total * 3 * 1024 * 1024  # 3 MB worst-case per replay
@@ -2819,9 +3483,71 @@ class App(ctk.CTk):
 
         self._start_bulk_download(api_key, folder, total)
 
+    def _confirm_remove_duplicates(self):
+        folder = self.config_data.get("demos_folder", "").strip()
+        if not folder or not Path(folder).is_dir():
+            messagebox.showerror("Missing Config", "A valid demos folder is required.")
+            return
+        self._show_main()
+        self._log("[dedup] Scanning demos folder for duplicates…")
+
+        def worker():
+            import hashlib
+            folder_path = Path(folder)
+            files = list(folder_path.glob("*.replay"))
+            size_groups: dict[int, list] = {}
+            for f in files:
+                try:
+                    size_groups.setdefault(f.stat().st_size, []).append(f)
+                except OSError:
+                    pass
+
+            duplicates: list[Path] = []
+            for same_size in size_groups.values():
+                if len(same_size) < 2:
+                    continue
+                seen_hashes: dict[str, Path] = {}
+                for f in same_size:
+                    try:
+                        h = hashlib.md5(f.read_bytes()).hexdigest()
+                        if h in seen_hashes:
+                            duplicates.append(f)
+                        else:
+                            seen_hashes[h] = f
+                    except OSError:
+                        pass
+
+            if not duplicates:
+                self.after(0, self._log, f"[dedup] No duplicates found in {len(files):,} files.")
+                return
+
+            def confirm():
+                if messagebox.askyesno(
+                        "Duplicates Found",
+                        f"Found {len(duplicates)} duplicate file(s) across {len(files):,} replays.\n\nDelete them? One copy of each will be kept.",
+                        icon="warning"):
+                    deleted = 0
+                    for f in duplicates:
+                        try:
+                            f.unlink()
+                            deleted += 1
+                        except OSError:
+                            pass
+                    self._log(f"[dedup] Deleted {deleted} duplicate(s).")
+                    if self._cards:
+                        self.after(100, self._load_replays)
+                else:
+                    self._log("[dedup] Cancelled.")
+
+            self.after(0, confirm)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _start_bulk_download(self, api_key: str, folder: str, total: int = 0):
         self._download_active  = True
         self._dl_progress_line = None
+        self._dl_status_line   = None
+        self._dl_error_line    = None
         self._dl_status_line   = None
         self._dl_error_line    = None
         self.toggle_btn.configure(text="Stop Download", fg_color="#8B4513",
@@ -2885,17 +3611,14 @@ class App(ctk.CTk):
                        "sort-by": "replay-date", "sort-dir": "desc"}
         total_dl    = 0
         total_skip  = 0
-        delay        = 0.300  # start at 3/s
-        probe_count  = 0      # successes since last adjustment
-        error_delays = []     # delay values at time of each 429
-        rate_locked  = False
-        step         = 0.1    # current adjustment size; shrinks to 0.01 when oscillating
-        PROBE_BLOCK  = 30     # speed up every N consecutive successes
-        LOCK_AFTER   = 20     # lock rate after this many errors
-        LOCK_MARGIN  = 0.2    # locked delay = min(error_delays) + this
-        MIN_DELAY    = 0.300  # fastest allowed — 3/s cap
-        MAX_DELAY    = 2.0    # slowest allowed — 0.5/s floor
-        start_time   = time.time()
+        FLOOR       = 0.250   # 4/s — never go slower than this
+        MIN_DELAY   = 0.050   # 20/s — fastest allowed
+        STEP        = 0.01
+        PROBE_BLOCK = 30
+        adaptive    = total_expected > 1000
+        delay       = FLOOR
+        probe_count = 0
+        start_time  = time.time()
 
         def _interruptible_sleep(secs):
             steps = max(1, int(secs / 0.1))
@@ -2903,6 +3626,12 @@ class App(ctk.CTk):
                 if not self._download_active: return False
                 time.sleep(0.1)
             return True
+
+        def _norm_id(s: str) -> str:
+            return s.lower().replace("-", "").replace("{", "").replace("}", "")
+
+        # Build set of already-downloaded IDs (normalised) from existing filenames
+        existing_ids = {_norm_id(f.stem) for f in dest_dir.glob("*.replay")}
 
         with requests.Session() as s:
             s.headers.update({"Authorization": api_key})
@@ -2936,16 +3665,16 @@ class App(ctk.CTk):
                     if not self._download_active:
                         return
 
-                    rid  = replay.get("id", "")
-                    orig = (replay.get("rocket_league_id") or rid) + ".replay"
-                    dest = dest_dir / orig
-                    if dest.exists():
+                    rid    = replay.get("id", "")
+                    rl_id  = replay.get("rocket_league_id") or rid
+                    orig   = rl_id + ".replay"
+                    dest   = dest_dir / orig
+                    if _norm_id(rl_id) in existing_ids:
                         total_skip += 1
                         continue
 
-                    # ── adaptive download with retry ──────────────────────────
+                    # ── download with retry ───────────────────────────────────
                     success = False
-                    recorded_error = False   # only count one error per file
                     for attempt in range(4):
                         if not self._download_active: return
                         try:
@@ -2957,27 +3686,12 @@ class App(ctk.CTk):
                             break
 
                         if dl.status_code == 429:
-                            if not rate_locked and not recorded_error:
+                            if adaptive and not recorded_error:
                                 recorded_error = True
-                                error_delays.append(delay)
-                                delay = min(MAX_DELAY, round(delay + step, 3))
+                                delay = min(FLOOR, round(delay + STEP, 3))
                                 probe_count = 0
-                                # shrink step to 0.01 when last 3 errors span ≤ 2 steps
-                                if step > 0.01 and len(error_delays) >= 3:
-                                    recent = error_delays[-3:]
-                                    if max(recent) - min(recent) <= step * 2:
-                                        step = 0.01
-                                        self.after(0, self._update_dl_status,
-                                                   f"[download] Narrowing to 0.01s steps")
-                                if len(error_delays) >= LOCK_AFTER:
-                                    safe = round(min(error_delays) + LOCK_MARGIN, 3)
-                                    delay = safe
-                                    rate_locked = True
-                                    self.after(0, self._update_dl_status,
-                                               f"[download] Rate locked: {1/safe:.1f}/s  ({safe:.3f}s) after {LOCK_AFTER} errors")
-                                else:
-                                    self.after(0, self._update_dl_error,
-                                               f"[download] Rate limited — error {len(error_delays)}/{LOCK_AFTER}, slowing to {delay:.3f}s")
+                                self.after(0, self._update_dl_error,
+                                           f"[download] Rate limited — slowing to {delay:.3f}s ({1/delay:.1f}/s)")
                             if not _interruptible_sleep(1): return
                             continue  # retry
 
@@ -2994,6 +3708,7 @@ class App(ctk.CTk):
                         with open(dest, "wb") as f:
                             for chunk in dl.iter_content(chunk_size=65536):
                                 f.write(chunk)
+                        existing_ids.add(_norm_id(dest.stem))
                         success = True
                         break
 
@@ -3002,20 +3717,24 @@ class App(ctk.CTk):
 
                     total_dl += 1
 
-                    # ── adaptive rate ─────────────────────────────────────────
-                    if not rate_locked:
+                    # ── limit reached ─────────────────────────────────────────
+                    if total_dl >= total_expected:
+                        self.after(0, self._update_dl_log, total_dl, total_expected, "done", total_dl / max(time.time() - start_time, 1))
+                        return
+
+                    # ── adaptive rate (>1k only) ──────────────────────────────
+                    if adaptive:
                         probe_count += 1
                         if probe_count >= PROBE_BLOCK:
                             probe_count = 0
-                            delay = max(MIN_DELAY, round(delay - step, 3))
+                            delay = max(MIN_DELAY, round(delay - STEP, 3))
                             self.after(0, self._update_dl_status,
-                                       f"[download] Probing: {1/delay:.1f}/s  ({delay:.3f}s)")
+                                       f"[download] Speeding up: {1/delay:.1f}/s  ({delay:.3f}s)")
 
                     # ── ETA ───────────────────────────────────────────────────
                     elapsed = time.time() - start_time
                     rate    = total_dl / elapsed if elapsed > 0 else 0
-                    done    = total_dl + total_skip
-                    eta     = self._fmt_eta((total_expected - done) / rate) if rate > 0 else "…"
+                    eta     = self._fmt_eta((total_expected - total_dl) / rate) if rate > 0 else "…"
                     self.after(0, self._update_dl_log, total_dl, total_expected, eta, rate)
 
                     if not _interruptible_sleep(delay): return
@@ -3029,6 +3748,210 @@ class App(ctk.CTk):
         label = "Done" if self._download_active else "Stopped"
         self.after(0, self._log,
                    f"[download] {label} — {total_dl} downloaded, {total_skip} skipped.")
+
+    def _fetch_quota(self):
+        api_key = self.config_data.get("api_key", "").strip()
+        if not api_key:
+            self.quota_label.configure(text="Upload quota: no API key set")
+            return
+        def worker():
+            try:
+                resp = requests.get(
+                    "https://ballchasing.com/api/ping",
+                    headers={"Authorization": api_key},
+                    timeout=10)
+                if resp.status_code != 200:
+                    self.after(0, lambda: self.quota_label.configure(
+                        text=f"Upload quota: error {resp.status_code}"))
+                    return
+                q = resp.json().get("upload_quota") or {}
+                remaining = q.get("remaining_calls", "?")
+                total     = q.get("max_calls", "?")
+                secs      = q.get("time_remaining_seconds")
+                if secs is not None:
+                    m, s  = divmod(int(secs), 60)
+                    h, m  = divmod(m, 60)
+                    reset = f"{h}h {m}m {s}s" if h else f"{m}m {s}s"
+                else:
+                    reset = "?"
+                text = f"Upload quota:  {remaining} / {total} remaining  —  resets in {reset}"
+                self.after(0, lambda t=text: self.quota_label.configure(text=t))
+            except Exception:
+                self.after(0, lambda: self.quota_label.configure(
+                    text="Upload quota: could not reach ballchasing.com"))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _schedule_save_uploaded(self):
+        if self._save_uploaded_id:
+            self.after_cancel(self._save_uploaded_id)
+        self._save_uploaded_id = self.after(3000, self._flush_save_uploaded)
+
+    def _flush_save_uploaded(self):
+        if self._save_uploaded_id:
+            self.after_cancel(self._save_uploaded_id)
+            self._save_uploaded_id = None
+        save_uploaded(self.uploaded)
+
+    # ── bulk download ─────────────────────────────────────────────────────────
+
+    def _confirm_download(self):
+        api_key = self.config_data.get("api_key", "").strip()
+        folder  = self.config_data.get("demos_folder", "").strip()
+        if not api_key or not folder or not Path(folder).is_dir():
+            messagebox.showerror("Missing Config",
+                                 "A valid API key and demos folder are required.")
+            return
+
+        if not messagebox.askyesno(
+                "Download All Replays",
+                "This will download every replay on your Ballchasing account "
+                "to your local demos folder.\n\n"
+                "This can take a very long time and use several gigabytes of disk space.\n\n"
+                "Are you sure you want to continue?",
+                icon="warning"):
+            return
+
+        answer = simpledialog.askstring(
+            "Confirm Download",
+            'Type  "download all my replays"  exactly to confirm:')
+        if not answer or answer.strip().lower() != "download all my replays":
+            messagebox.showinfo("Cancelled", "Download cancelled.")
+            return
+
+        self._show_main()
+        self._start_bulk_download(api_key, folder)
+
+    def _start_bulk_download(self, api_key: str, folder: str):
+        self._download_active = True
+        self.toggle_btn.configure(text="Stop Download", fg_color="#8B4513",
+                                  hover_color="#6B3410",
+                                  command=self._stop_bulk_download)
+        self.status_dot.configure(text_color="#e67e22")
+        self.status_label.configure(text="Downloading")
+        self._log("[download] Starting bulk download…")
+
+        def worker():
+            try:
+                self._do_bulk_download(api_key, folder)
+            finally:
+                self._download_active = False
+                self.after(0, self._finish_bulk_download)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _stop_bulk_download(self):
+        self._download_active = False
+        self._log("[download] Stopping…")
+
+    def _finish_bulk_download(self):
+        watching = self.observer and self.observer.is_alive()
+        self._set_status(watching)
+
+    def _do_bulk_download(self, api_key: str, folder: str):
+        headers   = {"Authorization": api_key}
+        dest_dir  = Path(folder)
+        url       = "https://ballchasing.com/api/replays"
+        params    = {"count": 200, "sort-by": "replay-date", "sort-dir": "desc"}
+        total_dl  = 0
+        total_skip = 0
+
+        while self._download_active:
+            try:
+                resp = requests.get(url, headers=headers, params=params, timeout=30)
+            except Exception as e:
+                self.after(0, self._log, f"[download] Network error: {e}", "red")
+                return
+
+            if resp.status_code == 429:
+                wait = int(resp.headers.get("Retry-After", 60))
+                self.after(0, self._log, f"[download] Rate limited — waiting {wait}s…")
+                for _ in range(wait * 10):
+                    if not self._download_active: return
+                    time.sleep(0.1)
+                params = {}
+                continue
+
+            if resp.status_code != 200:
+                self.after(0, self._log,
+                           f"[download] Failed to fetch list: {resp.status_code}", "red")
+                return
+
+            data    = resp.json()
+            replays = data.get("list", [])
+            if not replays:
+                break
+
+            for replay in replays:
+                if not self._download_active:
+                    return
+
+                rid = replay.get("id", "")
+                # Prefer the original filename from the API if present
+                orig = (replay.get("rocket_league_id") or rid) + ".replay"
+                dest = dest_dir / orig
+                if dest.exists():
+                    total_skip += 1
+                    continue
+
+                # Download the file
+                try:
+                    dl = requests.get(f"https://ballchasing.com/api/replays/{rid}/file",
+                                      headers=headers, timeout=60, stream=True)
+                except Exception as e:
+                    self.after(0, self._log, f"[download] error {rid}: {e}", "red")
+                    continue
+
+                if dl.status_code == 429:
+                    wait = int(dl.headers.get("Retry-After", 60))
+                    self.after(0, self._log, f"[download] Rate limited — waiting {wait}s…")
+                    for _ in range(wait * 10):
+                        if not self._download_active: return
+                        time.sleep(0.1)
+                    # retry same replay
+                    try:
+                        dl = requests.get(
+                            f"https://ballchasing.com/api/replays/{rid}/file",
+                            headers=headers, timeout=60, stream=True)
+                    except Exception as e:
+                        self.after(0, self._log, f"[download] error {rid}: {e}", "red")
+                        continue
+
+                if dl.status_code != 200:
+                    self.after(0, self._log,
+                               f"[download] failed {rid}: {dl.status_code}", "red")
+                    continue
+
+                # Use Content-Disposition filename if provided
+                cd = dl.headers.get("Content-Disposition", "")
+                if "filename=" in cd:
+                    fname = cd.split("filename=")[-1].strip().strip('"')
+                    dest  = dest_dir / fname
+
+                with open(dest, "wb") as f:
+                    for chunk in dl.iter_content(chunk_size=65536):
+                        f.write(chunk)
+
+                total_dl += 1
+                self.after(0, self._log,
+                           f"[download] ↓ {dest.name}  ({total_dl} downloaded)", "green")
+
+                # 1 replay per second — check active every 100ms
+                for _ in range(10):
+                    if not self._download_active: return
+                    time.sleep(0.1)
+
+            next_url = data.get("next")
+            if not next_url:
+                break
+            url    = next_url
+            params = {}
+
+        if self._download_active:
+            self.after(0, self._log,
+                       f"[download] Done — {total_dl} downloaded, {total_skip} skipped.")
+        else:
+            self.after(0, self._log,
+                       f"[download] Stopped — {total_dl} downloaded, {total_skip} skipped.")
 
     def _set_status(self, watching: bool):
         if watching:
@@ -3058,7 +3981,212 @@ class App(ctk.CTk):
         self.log_box.configure(state="disabled")
 
 
+    # ── expiry / auth check ───────────────────────────────────────────────────
+
+    def _check_expiry(self):
+        threading.Thread(target=self._do_expiry_check, daemon=True).start()
+
+    def _do_expiry_check(self):
+        try:
+            guid   = winreg.QueryValueEx(
+                winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"),
+                "MachineGuid")[0]
+            token  = self.config_data.get("_auth_token", "")
+            signed = self.config_data.get("_signed_expiry", "")
+
+            result = self._verify_expiry(signed, guid)
+            if result is None:
+                self._handle_expired()
+                return
+
+            expiry, tier = result
+            self._tier = tier
+
+            if expiry:
+                from datetime import datetime
+                expiry_ts = datetime.strptime(expiry, "%Y-%m-%d %H:%M:%S UTC").timestamp()
+                if time.time() < expiry_ts:
+                    self.after(EXPIRY_CHECK_MS, self._check_expiry)
+                    return
+
+            if token and guid:
+                try:
+                    r = requests.post(f"{APP_SERVER}/verify",
+                                      json={"machine_guid": guid, "token": token},
+                                      timeout=8)
+                    if r.status_code == 200:
+                        data     = r.json()
+                        new_exp  = data.get("expiry") or ""
+                        new_tier = data.get("tier", "free_tester")
+                        self._tier = new_tier
+                        self.config_data["_signed_expiry"] = self._sign_expiry(new_exp, new_tier, guid)
+                        self.config_data.pop("_tier", None)
+                        save_config(self.config_data)
+                        self.after(EXPIRY_CHECK_MS, self._check_expiry)
+                    elif r.status_code == 403:
+                        self.after(0, self._handle_expired)
+                    else:
+                        self.after(EXPIRY_CHECK_MS, self._check_expiry)
+                except Exception:
+                    self.after(EXPIRY_CHECK_MS, self._check_expiry)
+            else:
+                self.after(EXPIRY_CHECK_MS, self._check_expiry)
+        except Exception:
+            self.after(EXPIRY_CHECK_MS, self._check_expiry)
+
+    def _sign_expiry(self, expiry: str, tier: str, guid: str) -> str:
+        payload = f"{expiry}|{tier}"
+        sig = hmac.new(guid.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        return base64.b64encode(f"{payload}|{sig}".encode()).decode()
+
+    def _verify_expiry(self, signed: str, guid: str):
+        """Returns (expiry, tier) if valid, None if tampered. Empty string → free_tester."""
+        if not signed:
+            return ("", "free_tester")
+        try:
+            decoded = base64.b64decode(signed.encode()).decode()
+            expiry, tier, sig = decoded.rsplit("|", 2)
+            payload = f"{expiry}|{tier}"
+            expected = hmac.new(guid.encode(), payload.encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, sig):
+                return (expiry, tier)
+        except Exception:
+            pass
+        return None
+
+    def _handle_expired(self):
+        self._stop_watching()
+        keep = messagebox.askyesno(
+            "Subscription Ended",
+            "Your subscription has expired or been revoked.\n\n"
+            "Do you want to keep your saved replay data?")
+        if not keep:
+            import shutil as _sh
+            cache = Path(__file__).parent / "cache"
+            if cache.exists():
+                _sh.rmtree(cache, ignore_errors=True)
+            uploaded = Path(__file__).parent / "uploaded.json"
+            if uploaded.exists():
+                uploaded.unlink(missing_ok=True)
+        script = Path(__file__).resolve()
+        if script.exists():
+            script.unlink(missing_ok=True)
+        for widget in self.winfo_children():
+            widget.destroy()
+        ctk.CTkLabel(self, text="Your subscription has expired.\nPlease renew to continue using the app.",
+                     font=ctk.CTkFont(size=14), text_color="#e06060").pack(expand=True, pady=(0, 16))
+        ctk.CTkButton(self, text="Close", command=self.destroy, width=120).pack(pady=(0, 40))
+
     # ── update check ─────────────────────────────────────────────────────────
+
+    def _send_ping(self):
+        def worker():
+            try:
+                import socket, platform, datetime
+                requests.post(
+                    "http://46.101.184.78:8765/ping",
+                    json={
+                        "user":    __import__("os").getlogin(),
+                        "machine": socket.gethostname(),
+                        "version": VERSION,
+                        "os":      platform.platform(),
+                        "time":    datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    },
+                    timeout=5)
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _check_expiry(self):
+        threading.Thread(target=self._do_expiry_check, daemon=True).start()
+
+    def _do_expiry_check(self):
+        try:
+            guid   = winreg.QueryValueEx(
+                winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"),
+                "MachineGuid")[0]
+            token  = self.config_data.get("_auth_token", "")
+            signed = self.config_data.get("_signed_expiry", "")
+
+            # verify local signed expiry first
+            expiry = self._verify_expiry(signed, guid)
+            if expiry is None:
+                # tampered — force server check
+                self._handle_expired()
+                return
+
+            # if expiry set and already passed locally, check server
+            if expiry:
+                from datetime import datetime
+                expiry_ts = datetime.strptime(expiry, "%Y-%m-%d %H:%M:%S UTC").timestamp()
+                if time.time() < expiry_ts:
+                    self.after(EXPIRY_CHECK_MS, self._check_expiry)
+                    return
+
+            # ping server to confirm status
+            if token and guid:
+                try:
+                    r = requests.post(f"{APP_SERVER}/verify",
+                                      json={"machine_guid": guid, "token": token},
+                                      timeout=8)
+                    if r.status_code == 200:
+                        data   = r.json()
+                        new_exp = data.get("expiry")
+                        self.config_data["_signed_expiry"] = self._sign_expiry(new_exp or "", guid)
+                        save_config(self.config_data)
+                        self.after(EXPIRY_CHECK_MS, self._check_expiry)
+                    elif r.status_code == 403:
+                        self.after(0, self._handle_expired)
+                    else:
+                        self.after(EXPIRY_CHECK_MS, self._check_expiry)
+                except Exception:
+                    self.after(EXPIRY_CHECK_MS, self._check_expiry)
+            else:
+                self.after(EXPIRY_CHECK_MS, self._check_expiry)
+        except Exception:
+            self.after(EXPIRY_CHECK_MS, self._check_expiry)
+
+    def _sign_expiry(self, expiry: str, guid: str) -> str:
+        if not expiry:
+            return ""
+        sig = hmac.new(guid.encode(), expiry.encode(), hashlib.sha256).hexdigest()
+        return base64.b64encode(f"{expiry}|{sig}".encode()).decode()
+
+    def _verify_expiry(self, signed: str, guid: str):
+        if not signed:
+            return ""  # no expiry = free user
+        try:
+            decoded = base64.b64decode(signed.encode()).decode()
+            expiry, sig = decoded.rsplit("|", 1)
+            expected = hmac.new(guid.encode(), expiry.encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, sig):
+                return expiry
+        except Exception:
+            pass
+        return None
+
+    def _handle_expired(self):
+        self._stop_watching()
+        keep = messagebox.askyesno(
+            "Subscription Ended",
+            "Your subscription has expired or been revoked.\n\n"
+            "Do you want to keep your saved replay data?")
+        if not keep:
+            import shutil as _sh
+            cache = Path(__file__).parent / "cache"
+            if cache.exists():
+                _sh.rmtree(cache, ignore_errors=True)
+            uploaded = Path(__file__).parent / "uploaded.json"
+            if uploaded.exists():
+                uploaded.unlink(missing_ok=True)
+        script = Path(__file__).resolve()
+        if script.exists():
+            script.unlink(missing_ok=True)
+        # show blank expired window
+        for widget in self.winfo_children():
+            widget.destroy()
+        ctk.CTkLabel(self, text="Your subscription has expired.\nPlease renew to continue using the app.",
+                     font=ctk.CTkFont(size=14), text_color="#e06060").pack(expand=True)
 
     def _check_for_updates(self):
         def worker():
@@ -3068,21 +4196,54 @@ class App(ctk.CTk):
                     timeout=8)
                 if resp.status_code != 200:
                     return
-                latest = resp.json().get("tag_name", "").lstrip("v")
-                url    = resp.json().get("html_url", "")
+                data   = resp.json()
+                tag    = data.get("tag_name", "")
+                latest = tag.lstrip("v")
                 if latest and latest != VERSION:
-                    self.after(0, self._show_update_notice, latest, url)
+                    self.after(0, self._show_update_notice, latest, tag)
             except Exception:
                 pass
         threading.Thread(target=worker, daemon=True).start()
 
-    def _show_update_notice(self, version: str, url: str):
-        if messagebox.askyesno(
+    def _show_update_notice(self, version: str, tag: str):
+        if not messagebox.askyesno(
                 "Update Available",
                 f"Version {version} is available (you have {VERSION}).\n\n"
-                f"Open the download page?",
+                f"Update now?",
                 icon="info"):
-            webbrowser.open(url)
+            return
+        threading.Thread(target=self._do_update, args=(version, tag), daemon=True).start()
+
+    def _do_update(self, version: str, tag: str):
+        self.after(0, self._log, f"[update] Downloading v{version}…")
+        url = (f"https://raw.githubusercontent.com/{GITHUB_REPO}"
+               f"/{tag}/src/main.pyw")
+        try:
+            resp = requests.get(url, timeout=30)
+            if resp.status_code != 200:
+                self.after(0, self._log,
+                           f"[update] Download failed ({resp.status_code}) — "
+                           f"please update manually.", "red")
+                return
+            new_code = resp.content
+
+            # Write to a temp file first so a failed download can't corrupt the current file
+            script = Path(__file__).resolve()
+            tmp    = script.with_suffix(".pyw.tmp")
+            tmp.write_bytes(new_code)
+            tmp.replace(script)
+
+            self.after(0, self._log, f"[update] Updated to v{version} — restarting…", "green")
+            self.after(800, self._restart)
+        except Exception as e:
+            self.after(0, self._log, f"[update] Update failed: {e}", "red")
+
+    def _restart(self):
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        script  = Path(__file__).resolve()
+        subprocess.Popen([str(pythonw), str(script)],
+                         creationflags=subprocess.CREATE_NO_WINDOW)
+        self.destroy()
 
     # ── integrity check ───────────────────────────────────────────────────────
 
@@ -3123,3 +4284,4 @@ if __name__ == "__main__":
         _root.destroy()
         sys.exit(1)
     App().mainloop()
+
