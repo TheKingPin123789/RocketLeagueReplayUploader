@@ -41,7 +41,7 @@ CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
 BAKKESMOD_LOG = (Path.home() / "AppData" / "Roaming" / "bakkesmod" / "bakkesmod"
                  / "data" / "ReplayLogger" / "events.log")
-VERSION          = "1.0.3"
+VERSION          = "1.0.4"
 GITHUB_REPO      = "TheKingPin123789/RocketLeagueReplayUploader"
 APP_SERVER       = "http://46.101.184.78:8766"
 EXPIRY_CHECK_MS  = 3_600_000  # re-check every hour
