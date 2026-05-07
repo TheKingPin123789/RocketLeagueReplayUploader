@@ -734,8 +734,6 @@ _ar_path  = BASE_DIR.parent / "analyze_replay.py"
 _AR_URL   = "http://46.101.184.78/analyze_replay.py"
 AR_VERSION = "1.2"   # must match __version__ in analyze_replay.py
 
-_startup_logs: list[str] = []
-
 def _ensure_analyze_replay():
     """Download or update analyze_replay.py if missing or on a different version."""
     if _ar_path.exists():
@@ -744,19 +742,15 @@ def _ensure_analyze_replay():
                 if line.startswith("__version__"):
                     if AR_VERSION in line:
                         return   # already up to date
-                    _startup_logs.append(f"⬇ updating analyze_replay.py to v{AR_VERSION}…")
                     break        # wrong version — fall through to download
         except Exception:
             pass
-    else:
-        _startup_logs.append("⬇ downloading analyze_replay.py…")
     try:
         import urllib.request
         data = urllib.request.urlopen(_AR_URL, timeout=10).read()
         _ar_path.write_bytes(data)
-        _startup_logs.append(f"✓ analyze_replay.py v{AR_VERSION} ready")
-    except Exception as e:
-        _startup_logs.append(f"✗ analyze_replay.py download failed: {e}")
+    except Exception:
+        pass
 
 _ensure_analyze_replay()
 
@@ -1749,8 +1743,6 @@ class App(ctk.CTk):
         self._dl_progress_line       = None
         self._dl_status_line         = None
         self._dl_error_line          = None
-        for msg in _startup_logs:
-            self._log(msg)
         self.after(200, self._fetch_quota)
         self.after(400, self._check_expiry)
         self.after(1000, self._bg_cache_replays)
@@ -3871,7 +3863,6 @@ class App(ctk.CTk):
                     return
 
             if token and guid:
-                self.after(0, self._log, "↻ refreshing licence…")
                 try:
                     r = requests.post(f"{APP_SERVER}/verify",
                                       json={"machine_guid": guid, "token": token},
@@ -3884,19 +3875,15 @@ class App(ctk.CTk):
                         self.config_data["_signed_expiry"] = self._sign_expiry(new_exp, new_tier, guid)
                         self.config_data.pop("_tier", None)
                         save_config(self.config_data)
-                        self.after(0, self._log, f"✓ licence refreshed — tier: {new_tier}, expires: {new_exp or 'never'}")
                         if getattr(self, "_revoked", False):
                             self.after(0, self._restore_from_revoke)
                         else:
                             self.after(EXPIRY_CHECK_MS, self._check_expiry)
                     elif r.status_code == 403:
-                        self.after(0, self._log, "✗ licence check failed (403 — access revoked)", "red")
                         self.after(0, self._handle_expired)
                     else:
-                        self.after(0, self._log, f"✗ licence check failed (HTTP {r.status_code})")
                         self.after(EXPIRY_CHECK_MS, self._check_expiry)
-                except Exception as e:
-                    self.after(0, self._log, f"✗ licence check error: {e}")
+                except Exception:
                     self.after(EXPIRY_CHECK_MS, self._check_expiry)
             else:
                 self.after(EXPIRY_CHECK_MS, self._check_expiry)

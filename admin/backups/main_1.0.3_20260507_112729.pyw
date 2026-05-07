@@ -734,8 +734,6 @@ _ar_path  = BASE_DIR.parent / "analyze_replay.py"
 _AR_URL   = "http://46.101.184.78/analyze_replay.py"
 AR_VERSION = "1.2"   # must match __version__ in analyze_replay.py
 
-_startup_logs: list[str] = []
-
 def _ensure_analyze_replay():
     """Download or update analyze_replay.py if missing or on a different version."""
     if _ar_path.exists():
@@ -744,19 +742,15 @@ def _ensure_analyze_replay():
                 if line.startswith("__version__"):
                     if AR_VERSION in line:
                         return   # already up to date
-                    _startup_logs.append(f"⬇ updating analyze_replay.py to v{AR_VERSION}…")
                     break        # wrong version — fall through to download
         except Exception:
             pass
-    else:
-        _startup_logs.append("⬇ downloading analyze_replay.py…")
     try:
         import urllib.request
         data = urllib.request.urlopen(_AR_URL, timeout=10).read()
         _ar_path.write_bytes(data)
-        _startup_logs.append(f"✓ analyze_replay.py v{AR_VERSION} ready")
-    except Exception as e:
-        _startup_logs.append(f"✗ analyze_replay.py download failed: {e}")
+    except Exception:
+        pass
 
 _ensure_analyze_replay()
 
@@ -1749,8 +1743,6 @@ class App(ctk.CTk):
         self._dl_progress_line       = None
         self._dl_status_line         = None
         self._dl_error_line          = None
-        for msg in _startup_logs:
-            self._log(msg)
         self.after(200, self._fetch_quota)
         self.after(400, self._check_expiry)
         self.after(1000, self._bg_cache_replays)
@@ -2280,27 +2272,17 @@ class App(ctk.CTk):
             all_replays = sorted(Path(folder).glob("*.replay"),
                                  key=lambda f: f.stat().st_mtime, reverse=True)
             # Phase 1: basic card cache for all uncached replays
-            to_parse = [p for p in all_replays if not load_cached(p.name)]
-            if to_parse:
-                self.after(0, self._log,
-                           f"[cache] Parsing {len(to_parse)} uncached replay(s)…")
-            for path in to_parse:
-                info = parse_card_data(path)
-                if info:
-                    save_cache(path.name, info)
+            for path in all_replays:
+                if not load_cached(path.name):
+                    info = parse_card_data(path)
+                    if info:
+                        save_cache(path.name, info)
             # Phase 2: full network-parse for the 20 most recent
-            to_detail = [p for p in all_replays[:DETAIL_LIMIT]
-                         if not load_detailed(p.name)]
-            if to_detail:
-                self.after(0, self._log,
-                           f"[cache] Network-parsing {len(to_detail)} replay(s) for detailed stats…")
-            for path in to_detail:
-                info = parse_detailed(path)
-                if info:
-                    save_detailed(path.name, info)
-                    self.after(0, self._log, f"[cache] parsed  {path.name}")
-            if to_detail:
-                self.after(0, self._log, "[cache] Detailed stats ready.")
+            for path in all_replays[:DETAIL_LIMIT]:
+                if not load_detailed(path.name):
+                    info = parse_detailed(path)
+                    if info:
+                        save_detailed(path.name, info)
             self._enforce_detail_limit()
 
         threading.Thread(target=worker, daemon=True).start()
@@ -3206,12 +3188,10 @@ class App(ctk.CTk):
             # Background: detailed-parse the new replay, evict oldest
             def do_detail(p=path, n=filename):
                 if RATTLETRAP.exists() and not load_detailed(n):
-                    self.after(0, self._log, f"[parse] Network-parsing {n}…")
                     info = parse_detailed(p)
                     if info:
                         save_detailed(n, info)
                         self._enforce_detail_limit()
-                        self.after(0, self._log, f"[parse] Done  {n}")
             threading.Thread(target=do_detail, daemon=True).start()
 
             if self._upload_session_enabled and self.config_data.get("upload_on_detect", True):
@@ -3768,9 +3748,7 @@ class App(ctk.CTk):
         api_key = self.config_data.get("api_key", "").strip()
         if not api_key:
             self.quota_label.configure(text="Upload quota: no API key set")
-            self._log("↻ quota refresh — no API key set", "red")
             return
-        self._log("↻ refreshing upload quota…")
         def worker():
             try:
                 resp = requests.get(
@@ -3780,8 +3758,6 @@ class App(ctk.CTk):
                 if resp.status_code != 200:
                     self.after(0, lambda: self.quota_label.configure(
                         text=f"Upload quota: error {resp.status_code}"))
-                    self.after(0, self._log,
-                               f"↻ quota refresh — error {resp.status_code}", "red")
                     return
                 data  = resp.json()
                 q     = data.get("quota") or {}
@@ -3794,13 +3770,9 @@ class App(ctk.CTk):
                 text  = (f"Upload quota:{tier_str}  "
                          f"24h: {u24}/{m24}  —  7d: {u7}/{m7}")
                 self.after(0, lambda t=text: self.quota_label.configure(text=t))
-                self.after(0, self._log,
-                           f"↻ quota: 24h {u24}/{m24}  —  7d {u7}/{m7}")
             except Exception:
                 self.after(0, lambda: self.quota_label.configure(
                     text="Upload quota: could not reach ballchasing.com"))
-                self.after(0, self._log,
-                           "↻ quota refresh — could not reach ballchasing.com", "red")
         threading.Thread(target=worker, daemon=True).start()
 
     def _schedule_save_uploaded(self):
@@ -3871,7 +3843,6 @@ class App(ctk.CTk):
                     return
 
             if token and guid:
-                self.after(0, self._log, "↻ refreshing licence…")
                 try:
                     r = requests.post(f"{APP_SERVER}/verify",
                                       json={"machine_guid": guid, "token": token},
@@ -3884,19 +3855,15 @@ class App(ctk.CTk):
                         self.config_data["_signed_expiry"] = self._sign_expiry(new_exp, new_tier, guid)
                         self.config_data.pop("_tier", None)
                         save_config(self.config_data)
-                        self.after(0, self._log, f"✓ licence refreshed — tier: {new_tier}, expires: {new_exp or 'never'}")
                         if getattr(self, "_revoked", False):
                             self.after(0, self._restore_from_revoke)
                         else:
                             self.after(EXPIRY_CHECK_MS, self._check_expiry)
                     elif r.status_code == 403:
-                        self.after(0, self._log, "✗ licence check failed (403 — access revoked)", "red")
                         self.after(0, self._handle_expired)
                     else:
-                        self.after(0, self._log, f"✗ licence check failed (HTTP {r.status_code})")
                         self.after(EXPIRY_CHECK_MS, self._check_expiry)
-                except Exception as e:
-                    self.after(0, self._log, f"✗ licence check error: {e}")
+                except Exception:
                     self.after(EXPIRY_CHECK_MS, self._check_expiry)
             else:
                 self.after(EXPIRY_CHECK_MS, self._check_expiry)
