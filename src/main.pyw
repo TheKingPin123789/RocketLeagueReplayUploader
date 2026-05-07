@@ -1682,8 +1682,6 @@ class App(ctk.CTk):
         self._build_detail_page()
         self._show_main()
 
-        self.after(800, self._auto_detail_on_open)
-
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         if self.config_data.get("auto_upload", False):
@@ -1751,10 +1749,7 @@ class App(ctk.CTk):
                                         font=ctk.CTkFont(family="Consolas", size=12),
                                         text_color=C_DATE, anchor="w")
         self.quota_label.pack(side="left", fill="x", expand=True)
-        ctk.CTkButton(quota_row, text="Sync uploaded", width=100, height=22,
-                      fg_color="transparent", border_width=1, border_color=C_BORDER,
-                      font=ctk.CTkFont(size=11),
-                      command=self._sync_uploaded_status).pack(side="right")
+
 
         self.log_box = ctk.CTkTextbox(self.main_page, state="disabled",
                                       font=ctk.CTkFont(family="Consolas", size=12))
@@ -1780,10 +1775,7 @@ class App(ctk.CTk):
                       fg_color="transparent", border_width=1,
                       border_color=("#3B8ED0", "#1F6AA5"),
                       command=self._load_replays).pack()
-        ctk.CTkButton(btn_col, text="Sync uploaded", width=90, height=22,
-                      fg_color="transparent", border_width=1, border_color=C_BORDER,
-                      font=ctk.CTkFont(size=11),
-                      command=self._sync_uploaded_status).pack(pady=(4, 0))
+
         self.compact_btn = ctk.CTkButton(bar, text="Compact", width=75, height=28,
                       fg_color="transparent", border_width=1, border_color=C_BORDER,
                       font=ctk.CTkFont(size=12),
