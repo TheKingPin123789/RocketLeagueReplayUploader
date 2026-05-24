@@ -27,7 +27,7 @@ SCRIPT_REF  = BASE / "src" / "main.pyw"     # logical name used for __file__ ins
 CERT_FILE   = BASE / "server.crt"           # pinned server certificate
 SERVER_HTTP  = "http://46.101.184.78:8766"  # cert download + HTTP fallback
 SERVER_HTTPS = "https://46.101.184.78:8767" # all auth traffic (encrypted)
-LAUNCHER_VERSION = "1.1"                    # bumped whenever launcher.py changes
+LAUNCHER_VERSION = "1.2"
 
 # ── encryption (SHA-256 CTR stream cipher, key = HMAC of machine GUID) ────────
 _SALT = b"bcu_enc_v1"
