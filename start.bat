@@ -7,7 +7,7 @@ echo "%~dp0" | findstr /i "\\Downloads\\" >nul
 if not errorlevel 1 goto :wrong_location
 echo "%~dp0" | findstr /i "\\Desktop\\" >nul
 if not errorlevel 1 goto :wrong_location
-goto :checks
+goto :launch_or_setup
 
 :wrong_location
 echo.
@@ -23,8 +23,20 @@ echo.
 pause
 exit /b
 
-:checks
-:: ── Python check ───────────────────────────────────────────────────────────────
+:launch_or_setup
+:: ── If already installed, run the exe directly ────────────────────────────────
+if exist "%~dp0BallchasingUploader.exe" (
+    start "" "%~dp0BallchasingUploader.exe"
+    exit
+)
+
+:: ── First time setup ──────────────────────────────────────────────────────────
+echo =============================================
+echo   Ballchasing Uploader - First Time Setup
+echo =============================================
+echo.
+
+:: ── Python check ──────────────────────────────────────────────────────────────
 python --version >nul 2>&1
 if errorlevel 1 (
     echo.
@@ -36,7 +48,7 @@ if errorlevel 1 (
     exit /b
 )
 
-:: ── Python dependencies ────────────────────────────────────────────────────────
+:: ── Python dependencies ───────────────────────────────────────────────────────
 if not exist "%~dp0src\lib\" (
     echo Installing dependencies...
     pip install requests customtkinter pillow -q --target "%~dp0src\lib"
@@ -46,6 +58,7 @@ if not exist "%~dp0src\lib\" (
         exit /b
     )
     echo Done.
+    echo.
 )
 
 :: ── Download launcher from server ─────────────────────────────────────────────
@@ -59,14 +72,16 @@ if not exist "%~dp0launcher.py" (
         exit /b
     )
     echo Done.
+    echo.
 )
 
-:: ── Launch (no console window) ───────────────────────────────────────────────
+:: ── First launch via Python (downloads exe + everything else) ─────────────────
+echo Downloading app files...
 for /f "delims=" %%P in ('python -c "import sys,os; print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))"') do set PYTHONW=%%P
 
 if exist "%PYTHONW%" (
-    start "" "%PYTHONW%" "%~dp0launcher.py"
+    "%PYTHONW%" "%~dp0launcher.py"
 ) else (
-    start "" python "%~dp0launcher.py"
+    python "%~dp0launcher.py"
 )
 exit
