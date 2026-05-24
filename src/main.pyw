@@ -38,7 +38,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.150"
+VERSION          = "1.4.151"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1469,7 +1469,7 @@ class App(ctk.CTk):
         self._recent_canvas.pack(fill="x", padx=20, pady=(0, 8))
         self._recent_canvas.bind("<Configure>",
                                  lambda _: self.after(0, self._update_recent_replays))
-        self._recent_canvas.bind("<Button-1>", lambda _: self._show_replays())
+        self._recent_canvas.bind("<Button-1>", self._on_recent_click)
 
         site_link = ctk.CTkLabel(self.main_page, text="Website",
                                  font=ctk.CTkFont(size=11),
@@ -1515,12 +1515,14 @@ class App(ctk.CTk):
             tmp["grid_col"]  = 0
             tmp["_max_w"]    = w - 2 * CARD_MARGIN_X
             total_h += tmp["height"] + pad
-            tmp_cards.append(tmp)
+            tmp_cards.append((tmp, card))   # (display copy, original)
 
         canvas.configure(height=max(total_h, 40))
 
+        self._recent_hit_rects = []
         y = pad
-        for tmp in tmp_cards:
+        for tmp, orig in tmp_cards:
+            self._recent_hit_rects.append((y, y + tmp["height"], orig))
             draw_card(canvas, y, w, tmp)
             y += tmp["height"] + pad
 
@@ -2330,6 +2332,15 @@ class App(ctk.CTk):
 
     # ── canvas click ──────────────────────────────────────────────────────────
 
+    def _on_recent_click(self, event):
+        for y0, y1, card in getattr(self, '_recent_hit_rects', []):
+            if y0 <= event.y <= y1:
+                if not card.get('parsing'):
+                    self._detail_back = "main"
+                    self._show_detail(card)
+                return
+        self._show_replays()
+
     def _on_canvas_click(self, event):
         cy = self.canvas.canvasy(event.y)
         cw = self.canvas.winfo_width()
@@ -2347,6 +2358,7 @@ class App(ctk.CTk):
                     if not (x0 <= event.x <= x1):
                         continue
                 if not card.get("parsing"):
+                    self._detail_back = "replays"
                     self._show_detail(card)
                 return
 
@@ -2362,11 +2374,6 @@ class App(ctk.CTk):
         # ── row 1: back button + action buttons ───────────────────────────────
         top_row = ctk.CTkFrame(header, fg_color="transparent")
         top_row.pack(fill="x")
-        ctk.CTkButton(top_row, text="← Replays", width=90, height=28,
-                      fg_color="transparent", border_width=1,
-                      border_color=("#3B8ED0", "#1F6AA5"),
-                      text_color=("gray10", "gray90"),
-                      command=self._show_replays_from_detail).pack(side="left")
         acts = ctk.CTkFrame(top_row, fg_color="transparent")
         acts.pack(side="right")
         _btn_kw = dict(height=28, fg_color="transparent", border_width=1,
@@ -4927,7 +4934,10 @@ class App(ctk.CTk):
         if self._current_page == "main":
             self._show_settings()
         elif self._current_page == "detail":
-            self._show_replays_from_detail()
+            if getattr(self, '_detail_back', 'replays') == 'main':
+                self._show_main()
+            else:
+                self._show_replays_from_detail()
         else:
             self._show_main()
 
