@@ -61,6 +61,9 @@ if not exist "%~dp0launcher.py" (
     echo Done.
 )
 
+:: ── Desktop shortcut ──────────────────────────────────────────────────────────
+powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Ballchasing Uploader.lnk'); $s.TargetPath='%~dp0start.bat'; $s.WorkingDirectory='%~dp0'; $s.Description='Ballchasing Auto Uploader'; $s.Save()" >nul 2>&1
+
 :: ── Launch (no console window) ───────────────────────────────────────────────
 for /f "delims=" %%P in ('python -c "import sys,os; print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))"') do set PYTHONW=%%P
 
