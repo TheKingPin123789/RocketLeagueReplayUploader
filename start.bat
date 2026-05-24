@@ -2,6 +2,28 @@
 setlocal
 title Ballchasing Uploader
 
+:: ── Location check ─────────────────────────────────────────────────────────────
+echo "%~dp0" | findstr /i "\\Downloads\\" >nul
+if not errorlevel 1 goto :wrong_location
+echo "%~dp0" | findstr /i "\\Desktop\\" >nul
+if not errorlevel 1 goto :wrong_location
+goto :checks
+
+:wrong_location
+echo.
+echo  [!]  Do not run this from your Downloads folder or Desktop.
+echo.
+echo  Please do this first:
+echo    1. Create a permanent folder, e.g.  C:\BallchasingUploader
+echo    2. Move start.bat into that folder
+echo    3. Run start.bat from there
+echo.
+echo  This keeps all app files together in one place.
+echo.
+pause
+exit /b
+
+:checks
 :: ── Python check ───────────────────────────────────────────────────────────────
 python --version >nul 2>&1
 if errorlevel 1 (
