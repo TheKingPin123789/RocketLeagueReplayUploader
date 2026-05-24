@@ -1,0 +1,23 @@
+# Admin / deployment tools (server scripts, deploy keys, backups)
+admin/
+
+# Compiled Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local config (contains API keys and auth tokens)
+src/config.json
+
+# Build output / distributable
+BallchasingUploader.exe
+*.zip
+
+# Local cache / runtime files
+src/cache/
+src/.rrrocket_ok
+src/.keep
+
+# Logs
+*.log

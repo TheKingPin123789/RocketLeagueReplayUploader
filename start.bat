@@ -84,7 +84,7 @@ echo.
 :: ── desktop shortcut ──────────────────────────────────────────────────────────
 :shortcut
 echo Creating desktop shortcut...
-powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Ballchasing Uploader.lnk'); $s.TargetPath='%~f0'; $s.WorkingDirectory='%~dp0'; $s.Description='Ballchasing Auto Uploader'; $s.Save()"
+powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Ballchasing Uploader.lnk'); $s.TargetPath='%~dp0BallchasingUploader.exe'; $s.WorkingDirectory='%~dp0'; $s.Description='Ballchasing Auto Uploader'; $s.Save()"
 echo Done.
 echo.
 
@@ -95,7 +95,6 @@ timeout /t 2 >nul
 
 :: ── launch ────────────────────────────────────────────────────────────────────
 :launch
-powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Ballchasing Uploader.lnk'); $s.TargetPath='%~f0'; $s.WorkingDirectory='%~dp0'; $s.Description='Ballchasing Auto Uploader'; $s.Save()" >nul 2>&1
-for /f "delims=" %%P in ('python -c "import sys,os; print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))"') do set "PYTHONW=%%P"
-start "" "%PYTHONW%" "%~dp0launcher.py"
+powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Ballchasing Uploader.lnk'); $s.TargetPath='%~dp0BallchasingUploader.exe'; $s.WorkingDirectory='%~dp0'; $s.Description='Ballchasing Auto Uploader'; $s.Save()" >nul 2>&1
+start "" "%~dp0BallchasingUploader.exe"
 exit
