@@ -38,7 +38,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.152"
+VERSION          = "1.4.153"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6524,13 +6524,11 @@ class App(ctk.CTk):
 
     def _do_expiry_check(self):
         try:
-            guid   = winreg.QueryValueEx(
-                winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"),
-                "MachineGuid")[0]
-            token  = self.config_data.get("_auth_token", "")
-            signed = self.config_data.get("_signed_expiry", "")
+            client_id = self.config_data.get("_client_id", "")
+            token     = self.config_data.get("_auth_token", "")
+            signed    = self.config_data.get("_signed_expiry", "")
 
-            result = self._verify_expiry(signed, guid)
+            result = self._verify_expiry(signed, client_id)
             if result is None:
                 self.after(0, self._handle_expired)
                 return
@@ -6555,18 +6553,18 @@ class App(ctk.CTk):
                 return
 
             # Expired (or no expiry date) — try to refresh from server
-            if token and guid:
+            if token and client_id:
                 self.after(0, self._log, "↻ refreshing licence…")
                 try:
                     r = requests.post(f"{APP_SERVER}/verify",
-                                      json={"machine_guid": guid, "token": token},
+                                      json={"client_id": client_id, "token": token},
                                       timeout=8)
                     if r.status_code == 200:
                         data     = r.json()
                         new_exp  = data.get("expiry") or ""
                         new_tier = data.get("tier", "free_tester")
                         self.after(0, lambda t=new_tier: setattr(self, "_tier", t))
-                        signed = self._sign_expiry(new_exp, new_tier, guid)
+                        signed = self._sign_expiry(new_exp, new_tier, client_id)
                         def _save_expiry(s=signed, t=new_tier):
                             self.config_data["_signed_expiry"] = s
                             self.config_data.pop("_tier", None)
@@ -6609,12 +6607,12 @@ class App(ctk.CTk):
         except Exception:
             self.after(3_600_000, self._check_expiry)  # unexpected error — retry in 1 hour
 
-    def _sign_expiry(self, expiry: str, tier: str, guid: str) -> str:
+    def _sign_expiry(self, expiry: str, tier: str, client_id: str) -> str:
         payload = f"{expiry}|{tier}"
-        sig = hmac.new(guid.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        sig = hmac.new(client_id.encode(), payload.encode(), hashlib.sha256).hexdigest()
         return base64.b64encode(f"{payload}|{sig}".encode()).decode()
 
-    def _verify_expiry(self, signed: str, guid: str):
+    def _verify_expiry(self, signed: str, client_id: str):
         """Returns (expiry, tier) if valid, None if tampered. Empty string → free_tester."""
         if not signed:
             return ("", "free_tester")
@@ -6622,7 +6620,7 @@ class App(ctk.CTk):
             decoded = base64.b64decode(signed.encode()).decode()
             expiry, tier, sig = decoded.rsplit("|", 2)
             payload = f"{expiry}|{tier}"
-            expected = hmac.new(guid.encode(), payload.encode(), hashlib.sha256).hexdigest()
+            expected = hmac.new(client_id.encode(), payload.encode(), hashlib.sha256).hexdigest()
             if hmac.compare_digest(expected, sig):
                 return (expiry, tier)
         except Exception:
@@ -6658,17 +6656,9 @@ class App(ctk.CTk):
         def worker():
             try:
                 import datetime
-                try:
-                    hw_id = winreg.QueryValueEx(
-                        winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                                       r"SOFTWARE\Microsoft\Cryptography"),
-                        "MachineGuid")[0]
-                except Exception:
-                    hw_id = ""
                 requests.post(
                     "http://46.101.184.78:8765/ping",
                     json={
-                        "hw_id":   hw_id,
                         "version": VERSION,
                         "time":    datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
                     },
@@ -6686,16 +6676,13 @@ class App(ctk.CTk):
                 if not server_ver or server_ver == local_ver:
                     return  # already up to date or server didn't report a version
 
-                guid  = winreg.QueryValueEx(
-                    winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                                   r"SOFTWARE\Microsoft\Cryptography"),
-                    "MachineGuid")[0]
-                token = self.config_data.get("_auth_token", "")
-                if not token:
+                client_id = self.config_data.get("_client_id", "")
+                token     = self.config_data.get("_auth_token", "")
+                if not token or not client_id:
                     return
 
                 r = requests.post(f"{APP_SERVER}/launcher",
-                                  json={"machine_guid": guid, "token": token},
+                                  json={"client_id": client_id, "token": token},
                                   timeout=15)
                 if r.status_code != 200:
                     return

@@ -2,7 +2,7 @@
 Launcher — handles auth, version check, and starts main.pyw.
 Never deleted by the expiry flow. Called by start.bat.
 """
-import sys, os, json, winreg, socket, hashlib, hmac, base64, time, struct, ssl as _ssl_mod
+import sys, os, json, uuid, hashlib, hmac, base64, time, struct, ssl as _ssl_mod
 import tkinter as tk
 from tkinter import messagebox
 from pathlib import Path
@@ -87,12 +87,12 @@ def _post(path: str, **kwargs) -> requests.Response:
     return requests.post(f"{SERVER_HTTP}{path}", **kwargs)
 
 # ── helpers ────────────────────────────────────────────────────────────────────
-def sign_expiry(expiry: str, tier: str, guid: str) -> str:
+def sign_expiry(expiry: str, tier: str, client_id: str) -> str:
     payload = f"{expiry}|{tier}"
-    sig = hmac.new(guid.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    sig = hmac.new(client_id.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return base64.b64encode(f"{payload}|{sig}".encode()).decode()
 
-def verify_expiry(signed: str, guid: str):
+def verify_expiry(signed: str, client_id: str):
     """Returns (expiry, tier) if valid, None if tampered. Empty string → free_tester."""
     if not signed:
         return ("", "free_tester")
@@ -100,22 +100,22 @@ def verify_expiry(signed: str, guid: str):
         decoded = base64.b64decode(signed.encode()).decode()
         expiry, tier, sig = decoded.rsplit("|", 2)
         payload = f"{expiry}|{tier}"
-        expected = hmac.new(guid.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        expected = hmac.new(client_id.encode(), payload.encode(), hashlib.sha256).hexdigest()
         if hmac.compare_digest(expected, sig):
             return (expiry, tier)
     except Exception:
         pass
     return None
 
-def get_machine_guid() -> str:
-    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as k:
-        return winreg.QueryValueEx(k, "MachineGuid")[0]
-
-def get_username() -> str:
-    try:
-        return os.getlogin()
-    except Exception:
-        return "unknown"
+def get_or_create_client_id(cfg: dict) -> str:
+    """Return the app-specific client ID, generating a random UUID on first launch.
+    Clears old auth data so the client re-registers under the new ID."""
+    if "_client_id" not in cfg:
+        cfg["_client_id"] = str(uuid.uuid4())
+        cfg.pop("_auth_token",    None)
+        cfg.pop("_signed_expiry", None)
+        save_config(cfg)
+    return cfg["_client_id"]
 
 def load_config() -> dict:
     if CONFIG_FILE.exists():
@@ -160,19 +160,20 @@ def delete_app():
         SCRIPT_REF.unlink(missing_ok=True)
 
 def launch():
-    guid = get_machine_guid()
+    cfg       = load_config()
+    client_id = cfg.get("_client_id", "")
 
     # ── migrate: encrypt any leftover plaintext main.pyw ──────────────────────
     if SCRIPT_REF.exists() and not SCRIPT.exists():
         plaintext = SCRIPT_REF.read_bytes()
-        SCRIPT.write_bytes(_xcrypt(plaintext, guid))
+        SCRIPT.write_bytes(_xcrypt(plaintext, client_id))
         SCRIPT_REF.unlink(missing_ok=True)
 
     if not SCRIPT.exists():
         alert("Missing File", "Application file not found. Please reinstall.")
         sys.exit(1)
 
-    code = _xcrypt(SCRIPT.read_bytes(), guid)
+    code = _xcrypt(SCRIPT.read_bytes(), client_id)
 
     # run in a clean namespace so __file__ resolves correctly inside main.pyw
     ns = {"__file__": str(SCRIPT_REF), "__name__": "__main__"}
@@ -181,8 +182,8 @@ def launch():
 
 # ── main flow ──────────────────────────────────────────────────────────────────
 def main():
-    guid = get_machine_guid()
-    cfg  = load_config()
+    cfg       = load_config()
+    client_id = get_or_create_client_id(cfg)   # generates UUID on first launch
 
     # record our own version so main.pyw can detect when the server has a newer launcher
     if cfg.get("_launcher_version") != LAUNCHER_VERSION:
@@ -198,8 +199,7 @@ def main():
     if not token:
         try:
             r = _post("/register", json={
-                "machine_guid": guid,
-                "username":     get_username(),
+                "client_id": client_id,
             }, timeout=8)
             if r.status_code == 200:
                 data  = r.json()
@@ -224,8 +224,8 @@ def main():
     # ── step 2: verify token + get version ────────────────────────────────────
     try:
         r = _post("/verify", json={
-            "machine_guid": guid,
-            "token":        token,
+            "client_id": client_id,
+            "token":     token,
         }, timeout=8)
 
         if r.status_code == 200:
@@ -234,7 +234,7 @@ def main():
             expiry  = data.get("expiry")
             version = data.get("version", "")
             cfg.pop("_tier", None)
-            cfg["_signed_expiry"]          = sign_expiry(expiry or "", tier, guid)
+            cfg["_signed_expiry"]          = sign_expiry(expiry or "", tier, client_id)
             cfg["_server_launcher_version"] = data.get("launcher_version", "")
             save_config(cfg)
 
@@ -242,7 +242,7 @@ def main():
             local_version = _read_local_version()
             has_script = SCRIPT.exists() or SCRIPT_REF.exists()
             if not has_script or (version and version != local_version):
-                _download_code(guid, token, version, cfg)
+                _download_code(client_id, token, version, cfg)
             else:
                 launch()
 
@@ -271,15 +271,15 @@ def main():
         _run_with_local_expiry_check(cfg)
 
 
-def _download_code(guid: str, token: str, version: str, cfg: dict):
+def _download_code(client_id: str, token: str, version: str, cfg: dict):
     try:
         r = _post("/code", json={
-            "machine_guid": guid,
-            "token":        token,
+            "client_id": client_id,
+            "token":     token,
         }, timeout=30)
         if r.status_code == 200:
-            # encrypt with machine-specific key before writing to disk
-            encrypted = _xcrypt(r.content, guid)
+            # encrypt with client-specific key before writing to disk
+            encrypted = _xcrypt(r.content, client_id)
             SCRIPT.parent.mkdir(parents=True, exist_ok=True)
             tmp = SCRIPT.with_suffix(".tmp")
             tmp.write_bytes(encrypted)
@@ -315,9 +315,9 @@ def _read_local_version() -> str:
 
 def _run_with_local_expiry_check(cfg: dict):
     """Server unreachable — check local signed expiry then run or delete."""
-    guid   = get_machine_guid()
-    signed = cfg.get("_signed_expiry", "")
-    result = verify_expiry(signed, guid)
+    client_id = cfg.get("_client_id", "")
+    signed    = cfg.get("_signed_expiry", "")
+    result    = verify_expiry(signed, client_id)
 
     if result is None:
         delete_app()
