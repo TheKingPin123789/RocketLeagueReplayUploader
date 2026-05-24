@@ -30,7 +30,7 @@ RATTLETRAP_FILE = BASE / "src" / "rattletrap.exe"
 LOGO_FILE       = BASE / "src" / "logo.ico"
 SERVER_HTTP  = "http://46.101.184.78:8766"
 SERVER_HTTPS = "https://46.101.184.78:8767"
-LAUNCHER_VERSION = "1.7"
+LAUNCHER_VERSION = "1.8"
 
 # ── certificate management ────────────────────────────────────────────────────
 def _cert_days_remaining() -> int:
@@ -125,18 +125,20 @@ def _ensure_logo():
         pass
 
 def _create_shortcut():
-    """Create/update the desktop shortcut pointing to start.bat with the app icon."""
+    """Create/update the desktop shortcut targeting pythonw.exe directly,
+    so Windows taskbar pinning uses the correct icon."""
     try:
-        import subprocess
-        start_bat = BASE / "start.bat"
-        if not start_bat.exists():
-            return
-        icon_str = str(LOGO_FILE) if LOGO_FILE.exists() else ""
-        icon_clause = f"$s.IconLocation='{icon_str},0'; " if icon_str else ""
+        import subprocess, sys
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if not pythonw.exists():
+            pythonw = Path(sys.executable)  # fallback to python.exe
+        launcher_path = BASE / "launcher.py"
+        icon_clause = f"$s.IconLocation='{LOGO_FILE},0'; " if LOGO_FILE.exists() else ""
         ps = (
             f"$ws=New-Object -ComObject WScript.Shell; "
             f"$s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\\Ballchasing Uploader.lnk'); "
-            f"$s.TargetPath='{start_bat}'; "
+            f"$s.TargetPath='{pythonw}'; "
+            f"$s.Arguments='\"{launcher_path}\"'; "
             f"$s.WorkingDirectory='{BASE}'; "
             f"$s.Description='Ballchasing Auto Uploader'; "
             f"{icon_clause}"
