@@ -1,8 +1,8 @@
 """
-Launcher — handles auth, version check, and starts main.pyw.
+Launcher — version check and starts main.pyw.
 Never deleted by the expiry flow. Called by start.bat.
 """
-import sys, os, json, uuid, hashlib, hmac, base64, time, struct, ssl as _ssl_mod
+import sys, os, json, uuid, hashlib, struct, ssl as _ssl_mod
 import tkinter as tk
 from tkinter import messagebox
 from pathlib import Path
@@ -27,12 +27,13 @@ SCRIPT_REF  = BASE / "src" / "main.pyw"     # logical name used for __file__ ins
 CERT_FILE   = BASE / "server.crt"           # pinned server certificate
 SERVER_HTTP  = "http://46.101.184.78:8766"  # cert download + HTTP fallback
 SERVER_HTTPS = "https://46.101.184.78:8767" # all auth traffic (encrypted)
-LAUNCHER_VERSION = "1.3"
+LAUNCHER_VERSION = "1.4"
 
 # ── encryption (SHA-256 CTR stream cipher, key = HMAC of machine GUID) ────────
 _SALT = b"bcu_enc_v1"
 
 def _derive_key(guid: str) -> bytes:
+    import hmac
     return hmac.new(_SALT, guid.encode(), hashlib.sha256).digest()
 
 def _keystream(key: bytes, length: int) -> bytes:
@@ -87,26 +88,6 @@ def _post(path: str, **kwargs) -> requests.Response:
     return requests.post(f"{SERVER_HTTP}{path}", **kwargs)
 
 # ── helpers ────────────────────────────────────────────────────────────────────
-def sign_expiry(expiry: str, tier: str, client_id: str) -> str:
-    payload = f"{expiry}|{tier}"
-    sig = hmac.new(client_id.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return base64.b64encode(f"{payload}|{sig}".encode()).decode()
-
-def verify_expiry(signed: str, client_id: str):
-    """Returns (expiry, tier) if valid, None if tampered. Empty string → free_tester."""
-    if not signed:
-        return ("", "free_tester")
-    try:
-        decoded = base64.b64decode(signed.encode()).decode()
-        expiry, tier, sig = decoded.rsplit("|", 2)
-        payload = f"{expiry}|{tier}"
-        expected = hmac.new(client_id.encode(), payload.encode(), hashlib.sha256).hexdigest()
-        if hmac.compare_digest(expected, sig):
-            return (expiry, tier)
-    except Exception:
-        pass
-    return None
-
 def get_or_create_client_id(cfg: dict) -> str:
     """Return the app-specific client ID, generating a random UUID on first launch.
     Clears old auth data and removes the old encrypted script (which was keyed to
@@ -114,7 +95,6 @@ def get_or_create_client_id(cfg: dict) -> str:
     if "_client_id" not in cfg:
         cfg["_client_id"] = str(uuid.uuid4())
         cfg.pop("_auth_token",    None)
-        cfg.pop("_signed_expiry", None)
         cfg.pop("_local_version", None)   # forces version mismatch → fresh download
         SCRIPT.unlink(missing_ok=True)    # remove old file encrypted with wrong key
         save_config(cfg)
@@ -138,29 +118,6 @@ def alert(title: str, msg: str):
     root.attributes("-topmost", True)
     messagebox.showinfo(title, msg)
     root.destroy()
-
-def ask(title: str, msg: str) -> bool:
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    result = messagebox.askyesno(title, msg)
-    root.destroy()
-    return result
-
-def delete_app():
-    keep = ask("Subscription", "Do you want to keep your saved replay data for when you reconnect?")
-    if not keep:
-        import shutil
-        cache = BASE / "src" / "cache"
-        if cache.exists():
-            shutil.rmtree(cache, ignore_errors=True)
-        uploaded = BASE / "src" / "uploaded.json"
-        if uploaded.exists():
-            uploaded.unlink(missing_ok=True)
-    if SCRIPT.exists():
-        SCRIPT.unlink(missing_ok=True)
-    if SCRIPT_REF.exists():
-        SCRIPT_REF.unlink(missing_ok=True)
 
 def launch():
     cfg       = load_config()
@@ -208,7 +165,6 @@ def main():
                 data  = r.json()
                 token = data.get("token", "")
                 cfg["_auth_token"] = token
-                cfg.pop("_tier", None)
                 save_config(cfg)
             else:
                 alert("Registration Failed",
@@ -221,7 +177,7 @@ def main():
                       "Could not reach the server and no local copy found.\n"
                       "Please connect to the internet and visit http://46.101.184.78 to download the app.")
                 sys.exit(1)
-            _run_with_local_expiry_check(cfg)
+            launch()
             return
 
     # ── step 2: verify token + get version ────────────────────────────────────
@@ -233,11 +189,7 @@ def main():
 
         if r.status_code == 200:
             data    = r.json()
-            tier    = data.get("tier", "free_tester")
-            expiry  = data.get("expiry")
             version = data.get("version", "")
-            cfg.pop("_tier", None)
-            cfg["_signed_expiry"]          = sign_expiry(expiry or "", tier, client_id)
             cfg["_server_launcher_version"] = data.get("launcher_version", "")
             save_config(cfg)
 
@@ -250,28 +202,31 @@ def main():
                 launch()
 
         elif r.status_code == 403:
-            status = r.json().get("status", "")
-            if status in ("revoked", "expired"):
-                if SCRIPT.exists() or SCRIPT_REF.exists():
-                    launch()  # main.pyw shows the revoke screen
-                else:
-                    alert("Subscription Ended",
-                          "Your access has been revoked or your subscription has expired.\n"
-                          "Please renew to continue using the app.")
-                    sys.exit(0)
-            elif status == "unregistered":
-                cfg.pop("_auth_token", None)
-                save_config(cfg)
-                main()  # retry
+            # Server can still revoke bad actors; for everyone else just launch
+            if SCRIPT.exists() or SCRIPT_REF.exists():
+                launch()
             else:
-                delete_app()
-                alert("Access Denied", "Your access has been denied. Please contact support.")
-            sys.exit(0)
+                alert("Access Denied",
+                      "Access denied by server. Please contact support.")
+                sys.exit(0)
         else:
-            _run_with_local_expiry_check(cfg)
+            # Server error — run with whatever is cached locally
+            if SCRIPT.exists() or SCRIPT_REF.exists():
+                launch()
+            else:
+                alert("Server Error",
+                      f"Server returned {r.status_code}. Please try again later.")
+                sys.exit(1)
 
     except requests.RequestException:
-        _run_with_local_expiry_check(cfg)
+        # Offline — run with cached copy
+        if SCRIPT.exists() or SCRIPT_REF.exists():
+            launch()
+        else:
+            alert("No Internet",
+                  "Could not reach the server and no local copy found.\n"
+                  "Please connect to the internet and try again.")
+            sys.exit(1)
 
 
 def _download_code(client_id: str, token: str, version: str, cfg: dict):
@@ -314,41 +269,6 @@ def _download_code(client_id: str, token: str, version: str, cfg: dict):
 def _read_local_version() -> str:
     cfg = load_config()
     return cfg.get("_local_version", "")
-
-
-def _run_with_local_expiry_check(cfg: dict):
-    """Server unreachable — check local signed expiry then run or delete."""
-    client_id = cfg.get("_client_id", "")
-    signed    = cfg.get("_signed_expiry", "")
-    result    = verify_expiry(signed, client_id)
-
-    if result is None:
-        delete_app()
-        alert("Verification Failed",
-              "Subscription data appears to have been tampered with.\n"
-              "Please connect to the internet to re-verify.")
-        sys.exit(0)
-
-    expiry, _tier = result
-    if expiry:
-        try:
-            expiry_ts = datetime.strptime(expiry, "%Y-%m-%d %H:%M:%S UTC").timestamp()
-            if time.time() > expiry_ts:
-                delete_app()
-                alert("Subscription Expired",
-                      "Your subscription has expired and the server is unreachable.\n"
-                      "Please connect to the internet to verify your subscription.")
-                sys.exit(0)
-        except Exception:
-            pass
-
-    if SCRIPT.exists() or SCRIPT_REF.exists():
-        launch()
-    else:
-        alert("No Internet",
-              "Could not reach the server and no local copy found.\n"
-              "Please connect to the internet and visit http://46.101.184.78 to download the app.")
-        sys.exit(1)
 
 
 if __name__ == "__main__":

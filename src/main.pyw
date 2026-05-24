@@ -5,9 +5,7 @@ import time
 import queue
 import shutil
 import unicodedata
-import hmac
 import hashlib
-import base64
 import winreg
 import calendar as _cal
 import threading
@@ -38,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.155"
+VERSION          = "1.4.156"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1257,7 +1255,6 @@ class App(ctk.CTk):
         self._my_name     = ""
 
         self._build_header()
-        self._build_warning_banner()
         self._build_main_page()
         self._build_settings_page()
         self._build_replays_page()
@@ -1277,17 +1274,11 @@ class App(ctk.CTk):
         self._dot_anim_id            = None     # after() id for status dot pulse animation
         self._bg_cache_busy          = False
         self._cache_progress_line    = None
-        self._tier                   = "free_tester"
-        self._revoked                = False
         self._dl_progress_line       = None
         self._dl_status_line         = None
         self._dl_error_line          = None
-        self._grace_start_ts: float | None = None
-        self._soft_locked            = False
-        self._grace_countdown_id     = None
         self.after(150, self._apply_canvas_theme)
         self.after(200, self._check_integrity)
-        self.after(250, self._check_expiry)
         self.after(300, self._fetch_quota)
         self.after(500, self._send_ping)
         self.after(4000, self._check_launcher_update)
@@ -1334,95 +1325,6 @@ class App(ctk.CTk):
         ctk.CTkLabel(hdr, text=f"v{VERSION}",
                      font=ctk.CTkFont(size=13),
                      text_color="gray50").pack(side="left", padx=(6, 0))
-
-    # ── warning banner ────────────────────────────────────────────────────────
-
-    def _build_warning_banner(self):
-        """Persistent frame packed below the header. Empty (zero height) until needed."""
-        self._banner_frame = ctk.CTkFrame(self, fg_color="transparent", height=0)
-        self._banner_frame.pack(fill="x")
-
-    def _show_grace_banner(self):
-        """Show countdown banner during the 72-hour grace period."""
-        if self._grace_start_ts is None:
-            return
-        remaining = max(0.0, 72 * 3600 - (time.time() - self._grace_start_ts))
-        h = int(remaining // 3600)
-        m = int((remaining % 3600) // 60)
-        text = (f"⚠  Licence unverified — unable to reach server. "
-                f"Features suspended in {h}h {m}m.")
-        self._set_banner(text, warning=True)
-        # refresh countdown every minute
-        if self._grace_countdown_id:
-            self.after_cancel(self._grace_countdown_id)
-        self._grace_countdown_id = self.after(60_000, self._show_grace_banner)
-
-    def _show_soft_lock_banner(self):
-        """Show persistent banner when the 72-hour grace has expired."""
-        self._set_banner(
-            "⛔  Licence unverified for 72 h — watching, uploading and stats suspended.",
-            warning=False)
-
-    def _set_banner(self, text: str, warning: bool):
-        for w in self._banner_frame.winfo_children():
-            w.destroy()
-        bg = ("#f5c518", "#7a5200") if warning else ("#c0392b", "#7a1a1a")
-        tc = ("#1a1a1a", "#ffffff")
-        self._banner_frame.configure(fg_color=bg)
-        ctk.CTkLabel(self._banner_frame, text=text,
-                     font=ctk.CTkFont(size=12), text_color=tc,
-                     anchor="w").pack(side="left", padx=(14, 8), pady=7, fill="x", expand=True)
-        ctk.CTkButton(self._banner_frame, text="Retry now", width=82, height=24,
-                      fg_color="transparent", border_width=1,
-                      border_color=tc, text_color=tc,
-                      font=ctk.CTkFont(size=11),
-                      command=self._banner_retry).pack(side="left", padx=(0, 14), pady=7)
-
-    def _hide_banner(self):
-        if self._grace_countdown_id:
-            self.after_cancel(self._grace_countdown_id)
-            self._grace_countdown_id = None
-        for w in self._banner_frame.winfo_children():
-            w.destroy()
-        self._banner_frame.configure(fg_color="transparent")
-
-    def _banner_retry(self):
-        """Immediately re-run the expiry check from the banner Retry button."""
-        # Update button text temporarily so user gets feedback
-        for w in self._banner_frame.winfo_children():
-            if isinstance(w, ctk.CTkButton):
-                w.configure(text="Checking…", state="disabled")
-        self._check_expiry()
-
-    # ── grace / soft-lock helpers ──────────────────────────────────────────────
-
-    def _record_grace_failure(self):
-        """Called on each failed server refresh. Starts grace timer or enters soft lock."""
-        if self._grace_start_ts is None:
-            self._grace_start_ts = time.time()
-            self.after(0, self._show_grace_banner)
-        elif time.time() - self._grace_start_ts >= 72 * 3600:
-            self.after(0, self._enter_soft_lock)
-        else:
-            self.after(0, self._show_grace_banner)
-
-    def _enter_soft_lock(self):
-        """Grace period expired — suspend network-dependent features."""
-        if self._soft_locked:
-            return
-        self._soft_locked = True
-        self._stop_watching()
-        self._show_soft_lock_banner()
-        self._log("⛔ Licence unverified for 72 h — features suspended.", "red")
-
-    def _clear_grace(self):
-        """Called on successful server contact — restore everything."""
-        was_locked = self._soft_locked
-        self._grace_start_ts = None
-        self._soft_locked    = False
-        self._hide_banner()
-        if was_locked:
-            self._log("✓ Licence verified — features restored.", "green")
 
     # ── main page ─────────────────────────────────────────────────────────────
 
@@ -2235,9 +2137,6 @@ class App(ctk.CTk):
 
     def _parse_next(self, gen: int):
         """Parse one replay with rrrocket; saves only card fields. Next starts when done."""
-        if self._soft_locked:
-            self._parse_queue.clear()
-            return
         if not self._parse_queue or self._parse_gen != gen:
             return
         path = self._parse_queue.pop(0)
@@ -2288,8 +2187,6 @@ class App(ctk.CTk):
     # ── startup background cache ──────────────────────────────────────────────
 
     def _bg_cache_replays(self):
-        if self._soft_locked:
-            return
         if self._bg_cache_busy:
             return
         if not RATTLETRAP.exists():
@@ -2420,57 +2317,56 @@ class App(ctk.CTk):
         if cached:
             self._render_detail(cached, card, bc_info)
 
-        if not self._soft_locked:
-            if bc_id and bc_info is None:
-                # bc_id known but stats not cached yet — fetch silently then re-render
-                def _fetch(c=card, ci=cached, bid=bc_id):
-                    api_key = self.config_data.get("api_key", "")
-                    bc = fetch_bc_stats(bid, api_key)
-                    if self._current_card and self._current_card["filename"] == c["filename"]:
-                        self.after(0, lambda: self._render_detail(ci, c, bc))
-                threading.Thread(target=_fetch, daemon=True).start()
+        if bc_id and bc_info is None:
+            # bc_id known but stats not cached yet — fetch silently then re-render
+            def _fetch(c=card, ci=cached, bid=bc_id):
+                api_key = self.config_data.get("api_key", "")
+                bc = fetch_bc_stats(bid, api_key)
+                if self._current_card and self._current_card["filename"] == c["filename"]:
+                    self.after(0, lambda: self._render_detail(ci, c, bc))
+            threading.Thread(target=_fetch, daemon=True).start()
 
-            elif not bc_id:
-                # No bc_id yet — look it up on demand then fetch stats
-                def _lookup(c=card, ci=cached):
-                    api_key = self.config_data.get("api_key", "").strip()
-                    if not api_key:
-                        return
-                    rl_id = (ci or {}).get("rl_id", "")
-                    if not rl_id:
-                        info = parse_card_data(c["path"])
-                        if info:
-                            save_cache(c["filename"], info)
-                            self.after(0, lambda i=info: self._update_card_info(c, i))
-                            ci = info
-                        rl_id = (ci or {}).get("rl_id", "")
-                    if not rl_id:
-                        return
-                    bid = lookup_bc_id(rl_id, api_key)
-                    if bid:
-                        save_upload_id(c["filename"], bid)
-                        self.after(0, lambda b=bid: self._btn_bc.configure(
-                            state="normal", text="Ballchasing"))
-                        bc = fetch_bc_stats(bid, api_key)
-                        if self._current_card and self._current_card["filename"] == c["filename"]:
-                            self.after(0, lambda: self._render_detail(ci, c, bc))
-                    else:
-                        # Not on Ballchasing — show upload prompt in detail view
-                        if self._current_card and self._current_card["filename"] == c["filename"]:
-                            self.after(0, lambda: self._render_detail(ci, c, None, show_upload_btn=True))
-                threading.Thread(target=_lookup, daemon=True).start()
-
-            if not cached:
-                # No header cache — parse first, then re-enter the flow above
-                self._render_parsing(card)
-                def _parse(c=card):
+        elif not bc_id:
+            # No bc_id yet — look it up on demand then fetch stats
+            def _lookup(c=card, ci=cached):
+                api_key = self.config_data.get("api_key", "").strip()
+                if not api_key:
+                    return
+                rl_id = (ci or {}).get("rl_id", "")
+                if not rl_id:
                     info = parse_card_data(c["path"])
                     if info:
                         save_cache(c["filename"], info)
                         self.after(0, lambda i=info: self._update_card_info(c, i))
+                        ci = info
+                    rl_id = (ci or {}).get("rl_id", "")
+                if not rl_id:
+                    return
+                bid = lookup_bc_id(rl_id, api_key)
+                if bid:
+                    save_upload_id(c["filename"], bid)
+                    self.after(0, lambda b=bid: self._btn_bc.configure(
+                        state="normal", text="Ballchasing"))
+                    bc = fetch_bc_stats(bid, api_key)
                     if self._current_card and self._current_card["filename"] == c["filename"]:
-                        self.after(0, lambda: self._show_detail(c))
-                threading.Thread(target=_parse, daemon=True).start()
+                        self.after(0, lambda: self._render_detail(ci, c, bc))
+                else:
+                    # Not on Ballchasing — show upload prompt in detail view
+                    if self._current_card and self._current_card["filename"] == c["filename"]:
+                        self.after(0, lambda: self._render_detail(ci, c, None, show_upload_btn=True))
+            threading.Thread(target=_lookup, daemon=True).start()
+
+        if not cached:
+            # No header cache — parse first, then re-enter the flow above
+            self._render_parsing(card)
+            def _parse(c=card):
+                info = parse_card_data(c["path"])
+                if info:
+                    save_cache(c["filename"], info)
+                    self.after(0, lambda i=info: self._update_card_info(c, i))
+                if self._current_card and self._current_card["filename"] == c["filename"]:
+                    self.after(0, lambda: self._show_detail(c))
+            threading.Thread(target=_parse, daemon=True).start()
 
     def _update_card_info(self, card: dict, info: dict):
         card["info"]   = info
@@ -2894,10 +2790,6 @@ class App(ctk.CTk):
         self._btn_bc.configure(state="normal" if bc_id else "disabled")
 
     def _detail_upload(self):
-        if self._soft_locked:
-            messagebox.showwarning("Licence unverified",
-                                   "Uploading is suspended — use Retry in the banner to restore access.")
-            return
         card = self._current_card
         if not card:
             return
@@ -3080,14 +2972,6 @@ class App(ctk.CTk):
 
     def _run_me_search(self):
         self._autosave_ids_entry()
-        if self._soft_locked:
-            for w in self.stats_content.winfo_children():
-                w.destroy()
-            ctk.CTkLabel(self.stats_content,
-                         text="Player Stats suspended — licence unverified.\nUse Retry in the banner.",
-                         text_color=C_DIM, font=ctk.CTkFont(size=13),
-                         justify="center").pack(pady=30)
-            return
         identities = self._parse_my_identities()
         if not identities:
             for w in self.stats_content.winfo_children():
@@ -5358,9 +5242,6 @@ class App(ctk.CTk):
                                   text_color="#e06060")
 
     def _start_watching(self):
-        if self._soft_locked:
-            self._set_btn_error("⚠ Licence unverified — use Retry in the banner")
-            return
         api_key = self.config_data.get("api_key", "").strip()
         folder  = self.config_data.get("demos_folder", "").strip()
         missing = []
@@ -5554,10 +5435,6 @@ class App(ctk.CTk):
         return result[0]
 
     def _confirm_download(self):
-        if self._soft_locked:
-            messagebox.showwarning("Licence unverified",
-                                   "Downloading is suspended — use Retry in the banner to restore access.")
-            return
         api_key = self.config_data.get("api_key", "").strip()
         folder  = self.config_data.get("demos_folder", "").strip()
         if not api_key or not folder or not Path(folder).is_dir():
@@ -5679,8 +5556,6 @@ class App(ctk.CTk):
     def _cleanup_orphans(self, folder: str | None = None):
         """Fast background sweep: remove cache/upload entries with no matching replay.
         No MD5 hashing — safe to call at every startup."""
-        if self._soft_locked:
-            return
         if folder is None:
             folder = self.config_data.get("demos_folder", "").strip()
         if not folder or not Path(folder).is_dir():
@@ -5775,10 +5650,6 @@ class App(ctk.CTk):
 
     def _dedup(self, folder: str | None = None, silent: bool = False):
         """Find and remove duplicate replays + orphaned cache/upload entries."""
-        if self._soft_locked:
-            if not silent:
-                self._log("[dedup] Suspended — licence unverified.")
-            return
         if folder is None:
             folder = self.config_data.get("demos_folder", "").strip()
         if not folder or not Path(folder).is_dir():
@@ -6145,8 +6016,6 @@ class App(ctk.CTk):
             self.after(0, self._dedup, folder)
 
     def _fetch_quota(self):
-        if self._soft_locked:
-            return
         api_key = self.config_data.get("api_key", "").strip()
         if not api_key:
             self.quota_label.configure(text="Upload quota: no API key set")
@@ -6483,187 +6352,6 @@ class App(ctk.CTk):
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
 
-
-    # ── expiry / auth check ───────────────────────────────────────────────────
-
-    def _check_expiry(self):
-        threading.Thread(target=self._do_expiry_check, daemon=True).start()
-
-    @staticmethod
-    def _next_check_ms(expiry_ts: float | None) -> int:
-        """Return milliseconds until the next expiry check.
-
-        Rules:
-          - No expiry date (free tier / unknown) → every hour
-          - < 1 hour left                        → every 5 minutes
-          - 1 – 24 hours left                    → every hour
-          - > 24 hours left                      → once per day, 5 min after
-                                                   the expiry time-of-day (UTC)
-        """
-        if expiry_ts is None:
-            return 24 * 3_600_000  # no expiry date — once per day after launch
-
-        time_left = expiry_ts - time.time()
-
-        if time_left < 3_600:            # < 1 hour
-            return 5 * 60_000
-
-        if time_left < 86_400:           # 1 h – 24 h
-            return 3_600_000
-
-        # > 24 hours — fire once per day, 5 minutes after the expiry time-of-day
-        expiry_dt   = datetime.fromtimestamp(expiry_ts, tz=timezone.utc)
-        target_tod  = (expiry_dt + timedelta(minutes=5)).timetz()   # time-of-day in UTC
-        now_utc     = datetime.now(tz=timezone.utc)
-        target_dt   = now_utc.replace(hour=target_tod.hour, minute=target_tod.minute,
-                                      second=0, microsecond=0)
-        if target_dt <= now_utc:
-            target_dt += timedelta(days=1)
-        secs = (target_dt - now_utc).total_seconds()
-        return max(int(secs * 1000), 60_000)   # floor at 1 minute
-
-    def _do_expiry_check(self):
-        try:
-            client_id = self.config_data.get("_client_id", "")
-            token     = self.config_data.get("_auth_token", "")
-            signed    = self.config_data.get("_signed_expiry", "")
-
-            # If no client_id yet (old launcher still on disk), skip local
-            # signature check — the server verify call below will be authoritative.
-            if not client_id:
-                result = ("", "free_tester")
-            else:
-                result = self._verify_expiry(signed, client_id)
-            if result is None:
-                self.after(0, self._handle_expired)
-                return
-
-            expiry, tier = result
-            self.after(0, lambda t=tier: setattr(self, "_tier", t))
-
-            expiry_ts: float | None = None
-            if expiry:
-                try:
-                    expiry_ts = datetime.strptime(
-                        expiry, "%Y-%m-%d %H:%M:%S UTC").replace(
-                        tzinfo=timezone.utc).timestamp()
-                except ValueError:
-                    pass
-
-            if expiry_ts is not None and time.time() < expiry_ts:
-                # Licence is still valid — clear any lingering grace state, schedule next check
-                if self._grace_start_ts is not None or self._soft_locked:
-                    self.after(0, self._clear_grace)
-                self.after(self._next_check_ms(expiry_ts), self._check_expiry)
-                return
-
-            # Expired (or no expiry date) — try to refresh from server
-            if token and (client_id or token):
-                self.after(0, self._log, "↻ refreshing licence…")
-                payload = {"token": token}
-                if client_id:
-                    payload["client_id"] = client_id
-                else:
-                    # Fallback for installs where launcher hasn't generated _client_id yet
-                    try:
-                        payload["machine_guid"] = winreg.QueryValueEx(
-                            winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                                           r"SOFTWARE\Microsoft\Cryptography"),
-                            "MachineGuid")[0]
-                    except Exception:
-                        pass
-                try:
-                    r = requests.post(f"{APP_SERVER}/verify", json=payload, timeout=8)
-                    if r.status_code == 200:
-                        data     = r.json()
-                        new_exp  = data.get("expiry") or ""
-                        new_tier = data.get("tier", "free_tester")
-                        self.after(0, lambda t=new_tier: setattr(self, "_tier", t))
-                        signed = self._sign_expiry(new_exp, new_tier, client_id or token)
-                        def _save_expiry(s=signed, t=new_tier):
-                            self.config_data["_signed_expiry"] = s
-                            self.config_data.pop("_tier", None)
-                            save_config(self.config_data)
-                        self.after(0, _save_expiry)
-                        self.after(0, self._log,
-                                   f"✓ licence refreshed — tier: {new_tier}, "
-                                   f"expires: {new_exp or 'never'}")
-                        # Clear grace / soft-lock if we were in one
-                        if self._grace_start_ts is not None or self._soft_locked:
-                            self.after(0, self._clear_grace)
-                        if getattr(self, "_revoked", False):
-                            self.after(0, self._restore_from_revoke)
-                        else:
-                            new_ts: float | None = None
-                            if new_exp:
-                                try:
-                                    new_ts = datetime.strptime(
-                                        new_exp, "%Y-%m-%d %H:%M:%S UTC").replace(
-                                        tzinfo=timezone.utc).timestamp()
-                                except ValueError:
-                                    pass
-                            self.after(self._next_check_ms(new_ts), self._check_expiry)
-                    elif r.status_code == 403:
-                        self.after(0, self._log,
-                                   "✗ licence check failed (403 — access revoked)", "red")
-                        self.after(0, self._handle_expired)
-                    else:
-                        self.after(0, self._log,
-                                   f"✗ licence check failed (HTTP {r.status_code})")
-                        self.after(0, self._record_grace_failure)
-                        self.after(5 * 60_000, self._check_expiry)
-                except Exception as e:
-                    self.after(0, self._log, f"✗ licence check error: {e}")
-                    self.after(0, self._record_grace_failure)
-                    self.after(5 * 60_000, self._check_expiry)
-            else:
-                # No token — can't refresh, use smart interval based on stored expiry
-                self.after(self._next_check_ms(expiry_ts), self._check_expiry)
-        except Exception:
-            self.after(3_600_000, self._check_expiry)  # unexpected error — retry in 1 hour
-
-    def _sign_expiry(self, expiry: str, tier: str, client_id: str) -> str:
-        payload = f"{expiry}|{tier}"
-        sig = hmac.new(client_id.encode(), payload.encode(), hashlib.sha256).hexdigest()
-        return base64.b64encode(f"{payload}|{sig}".encode()).decode()
-
-    def _verify_expiry(self, signed: str, client_id: str):
-        """Returns (expiry, tier) if valid, None if tampered. Empty string → free_tester."""
-        if not signed:
-            return ("", "free_tester")
-        try:
-            decoded = base64.b64decode(signed.encode()).decode()
-            expiry, tier, sig = decoded.rsplit("|", 2)
-            payload = f"{expiry}|{tier}"
-            expected = hmac.new(client_id.encode(), payload.encode(), hashlib.sha256).hexdigest()
-            if hmac.compare_digest(expected, sig):
-                return (expiry, tier)
-        except Exception:
-            pass
-        return None
-
-    def _handle_expired(self):
-        self._stop_watching()
-        self._revoked = True
-        for widget in self.winfo_children():
-            widget.destroy()
-        frame = ctk.CTkFrame(self, fg_color="transparent")
-        frame.place(relx=0.5, rely=0.5, anchor="center")
-        ctk.CTkLabel(frame, text="Access Revoked",
-                     font=ctk.CTkFont(size=22, weight="bold"),
-                     text_color="#e06060").pack(pady=(0, 12))
-        ctk.CTkLabel(frame,
-                     text="Your subscription has expired or been revoked.\nContact support to restore access.",
-                     font=ctk.CTkFont(size=13),
-                     text_color="#aaaaaa").pack(pady=(0, 28))
-        ctk.CTkButton(frame, text="Close", command=self.destroy, width=120).pack()
-        self.after(30_000, self._check_expiry)
-
-    def _restore_from_revoke(self):
-        import subprocess
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-        subprocess.Popen([str(pythonw), str(Path(__file__).resolve())])
-        self.destroy()
 
     # ── update check ─────────────────────────────────────────────────────────
 
