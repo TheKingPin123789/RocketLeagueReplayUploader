@@ -51,7 +51,7 @@ if errorlevel 1 (
 :: ── Python dependencies ───────────────────────────────────────────────────────
 if not exist "%~dp0src\lib\" (
     echo Installing dependencies...
-    pip install requests customtkinter pillow -q --target "%~dp0src\lib"
+    pip install requests customtkinter pillow watchdog -q --target "%~dp0src\lib"
     if errorlevel 1 (
         echo Failed to install dependencies.
         pause
