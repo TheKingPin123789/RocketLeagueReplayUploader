@@ -38,7 +38,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.153"
+VERSION          = "1.4.154"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6528,7 +6528,12 @@ class App(ctk.CTk):
             token     = self.config_data.get("_auth_token", "")
             signed    = self.config_data.get("_signed_expiry", "")
 
-            result = self._verify_expiry(signed, client_id)
+            # If no client_id yet (old launcher still on disk), skip local
+            # signature check — the server verify call below will be authoritative.
+            if not client_id:
+                result = ("", "free_tester")
+            else:
+                result = self._verify_expiry(signed, client_id)
             if result is None:
                 self.after(0, self._handle_expired)
                 return
@@ -6553,18 +6558,19 @@ class App(ctk.CTk):
                 return
 
             # Expired (or no expiry date) — try to refresh from server
-            if token and client_id:
+            if token and (client_id or token):
                 self.after(0, self._log, "↻ refreshing licence…")
+                payload = {"token": token}
+                if client_id:
+                    payload["client_id"] = client_id
                 try:
-                    r = requests.post(f"{APP_SERVER}/verify",
-                                      json={"client_id": client_id, "token": token},
-                                      timeout=8)
+                    r = requests.post(f"{APP_SERVER}/verify", json=payload, timeout=8)
                     if r.status_code == 200:
                         data     = r.json()
                         new_exp  = data.get("expiry") or ""
                         new_tier = data.get("tier", "free_tester")
                         self.after(0, lambda t=new_tier: setattr(self, "_tier", t))
-                        signed = self._sign_expiry(new_exp, new_tier, client_id)
+                        signed = self._sign_expiry(new_exp, new_tier, client_id or token)
                         def _save_expiry(s=signed, t=new_tier):
                             self.config_data["_signed_expiry"] = s
                             self.config_data.pop("_tier", None)
