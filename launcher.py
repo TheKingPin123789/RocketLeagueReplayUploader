@@ -25,10 +25,11 @@ import requests
 CONFIG_FILE  = BASE / "src" / "config.json"
 SCRIPT       = BASE / "src" / "main.pyw"    # plaintext script — exec'd directly
 SCRIPT_ENC   = BASE / "src" / "main.enc"    # old encrypted blob (migrated away)
-CERT_FILE    = BASE / "server.crt"
+CERT_FILE       = BASE / "server.crt"
+RATTLETRAP_FILE = BASE / "src" / "rattletrap.exe"
 SERVER_HTTP  = "http://46.101.184.78:8766"
 SERVER_HTTPS = "https://46.101.184.78:8767"
-LAUNCHER_VERSION = "1.5"
+LAUNCHER_VERSION = "1.6"
 
 # ── certificate management ────────────────────────────────────────────────────
 def _cert_days_remaining() -> int:
@@ -96,10 +97,25 @@ def _migrate_enc():
     if SCRIPT_ENC.exists():
         SCRIPT_ENC.unlink(missing_ok=True)
 
+def _ensure_rattletrap():
+    """Download rattletrap.exe from server if missing."""
+    if RATTLETRAP_FILE.exists():
+        return
+    try:
+        r = requests.get(f"{SERVER_HTTP}/rattletrap", timeout=30)
+        if r.status_code == 200:
+            RATTLETRAP_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = RATTLETRAP_FILE.with_suffix(".tmp")
+            tmp.write_bytes(r.content)
+            tmp.replace(RATTLETRAP_FILE)
+    except Exception:
+        pass  # not fatal — app will show parse errors but still run
+
 def launch():
     if not SCRIPT.exists():
         alert("Missing File", "Application file not found. Please reinstall.")
         sys.exit(1)
+    _ensure_rattletrap()
     ns = {"__file__": str(SCRIPT), "__name__": "__main__"}
     exec(compile(SCRIPT.read_bytes(), str(SCRIPT), "exec"), ns)  # noqa: S102
     sys.exit(0)
