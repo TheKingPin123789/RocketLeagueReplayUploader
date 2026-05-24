@@ -62,9 +62,10 @@ if not exist "%~dp0launcher.py" (
 )
 
 :: ── Launch (no console window) ───────────────────────────────────────────────
-where pythonw >nul 2>&1
-if not errorlevel 1 (
-    start "" pythonw "%~dp0launcher.py"
+for /f "delims=" %%P in ('python -c "import sys,os; print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))"') do set PYTHONW=%%P
+
+if exist "%PYTHONW%" (
+    start "" "%PYTHONW%" "%~dp0launcher.py"
 ) else (
     start "" python "%~dp0launcher.py"
 )
