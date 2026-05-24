@@ -168,6 +168,12 @@ def launch():
     _ensure_logo()
     _ensure_app_exe()
     _create_shortcut()
+    # If running as plain Python (first-time setup), hand off to the exe so the
+    # window lives inside BallchasingUploader.exe — correct icon on taskbar/pin.
+    if APP_EXE_FILE.exists() and not getattr(sys, 'frozen', False):
+        import subprocess
+        subprocess.Popen([str(APP_EXE_FILE)], cwd=str(BASE))
+        sys.exit(0)
     ns = {"__file__": str(SCRIPT), "__name__": "__main__"}
     exec(compile(SCRIPT.read_bytes(), str(SCRIPT), "exec"), ns)  # noqa: S102
     sys.exit(0)

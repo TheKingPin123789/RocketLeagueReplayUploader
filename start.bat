@@ -80,8 +80,8 @@ echo Downloading app files...
 for /f "delims=" %%P in ('python -c "import sys,os; print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))"') do set PYTHONW=%%P
 
 if exist "%PYTHONW%" (
-    "%PYTHONW%" "%~dp0launcher.py"
+    start "" "%PYTHONW%" "%~dp0launcher.py"
 ) else (
-    python "%~dp0launcher.py"
+    start "" python "%~dp0launcher.py"
 )
 exit
