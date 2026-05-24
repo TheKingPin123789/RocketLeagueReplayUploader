@@ -27,9 +27,10 @@ SCRIPT       = BASE / "src" / "main.pyw"    # plaintext script — exec'd direct
 SCRIPT_ENC   = BASE / "src" / "main.enc"    # old encrypted blob (migrated away)
 CERT_FILE       = BASE / "server.crt"
 RATTLETRAP_FILE = BASE / "src" / "rattletrap.exe"
+LOGO_FILE       = BASE / "src" / "logo.ico"
 SERVER_HTTP  = "http://46.101.184.78:8766"
 SERVER_HTTPS = "https://46.101.184.78:8767"
-LAUNCHER_VERSION = "1.6"
+LAUNCHER_VERSION = "1.7"
 
 # ── certificate management ────────────────────────────────────────────────────
 def _cert_days_remaining() -> int:
@@ -111,11 +112,50 @@ def _ensure_rattletrap():
     except Exception:
         pass  # not fatal — app will show parse errors but still run
 
+def _ensure_logo():
+    """Download logo.ico from server if missing."""
+    if LOGO_FILE.exists():
+        return
+    try:
+        r = requests.get(f"{SERVER_HTTP}/logo", timeout=10)
+        if r.status_code == 200:
+            LOGO_FILE.parent.mkdir(parents=True, exist_ok=True)
+            LOGO_FILE.write_bytes(r.content)
+    except Exception:
+        pass
+
+def _create_shortcut():
+    """Create/update the desktop shortcut pointing to start.bat with the app icon."""
+    try:
+        import subprocess
+        start_bat = BASE / "start.bat"
+        if not start_bat.exists():
+            return
+        icon_str = str(LOGO_FILE) if LOGO_FILE.exists() else ""
+        icon_clause = f"$s.IconLocation='{icon_str},0'; " if icon_str else ""
+        ps = (
+            f"$ws=New-Object -ComObject WScript.Shell; "
+            f"$s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\\Ballchasing Uploader.lnk'); "
+            f"$s.TargetPath='{start_bat}'; "
+            f"$s.WorkingDirectory='{BASE}'; "
+            f"$s.Description='Ballchasing Auto Uploader'; "
+            f"{icon_clause}"
+            f"$s.Save()"
+        )
+        subprocess.run(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
+            capture_output=True, timeout=10
+        )
+    except Exception:
+        pass
+
 def launch():
     if not SCRIPT.exists():
         alert("Missing File", "Application file not found. Please reinstall.")
         sys.exit(1)
     _ensure_rattletrap()
+    _ensure_logo()
+    _create_shortcut()
     ns = {"__file__": str(SCRIPT), "__name__": "__main__"}
     exec(compile(SCRIPT.read_bytes(), str(SCRIPT), "exec"), ns)  # noqa: S102
     sys.exit(0)
