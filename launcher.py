@@ -27,7 +27,7 @@ SCRIPT_REF  = BASE / "src" / "main.pyw"     # logical name used for __file__ ins
 CERT_FILE   = BASE / "server.crt"           # pinned server certificate
 SERVER_HTTP  = "http://46.101.184.78:8766"  # cert download + HTTP fallback
 SERVER_HTTPS = "https://46.101.184.78:8767" # all auth traffic (encrypted)
-LAUNCHER_VERSION = "1.2"
+LAUNCHER_VERSION = "1.3"
 
 # ── encryption (SHA-256 CTR stream cipher, key = HMAC of machine GUID) ────────
 _SALT = b"bcu_enc_v1"
@@ -109,11 +109,14 @@ def verify_expiry(signed: str, client_id: str):
 
 def get_or_create_client_id(cfg: dict) -> str:
     """Return the app-specific client ID, generating a random UUID on first launch.
-    Clears old auth data so the client re-registers under the new ID."""
+    Clears old auth data and removes the old encrypted script (which was keyed to
+    the old machine GUID) so it gets re-downloaded and re-encrypted with the new key."""
     if "_client_id" not in cfg:
         cfg["_client_id"] = str(uuid.uuid4())
         cfg.pop("_auth_token",    None)
         cfg.pop("_signed_expiry", None)
+        cfg.pop("_local_version", None)   # forces version mismatch → fresh download
+        SCRIPT.unlink(missing_ok=True)    # remove old file encrypted with wrong key
         save_config(cfg)
     return cfg["_client_id"]
 
