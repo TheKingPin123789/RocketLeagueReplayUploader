@@ -61,5 +61,11 @@ if not exist "%~dp0launcher.py" (
     echo Done.
 )
 
-:: ── Launch ─────────────────────────────────────────────────────────────────────
-python "%~dp0launcher.py"
+:: ── Launch (no console window) ───────────────────────────────────────────────
+where pythonw >nul 2>&1
+if not errorlevel 1 (
+    start "" pythonw "%~dp0launcher.py"
+) else (
+    start "" python "%~dp0launcher.py"
+)
+exit
