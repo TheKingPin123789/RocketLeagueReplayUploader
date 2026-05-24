@@ -3893,14 +3893,6 @@ class App(ctk.CTk):
                      ).grid(row=17, column=0, columnspan=3,
                             padx=20, pady=(0, 10), sticky="w")
 
-        ctk.CTkButton(pg, text="Remove Duplicates",
-                      command=self._dedup
-                      ).grid(row=18, column=0, columnspan=3,
-                             padx=20, pady=(0, 2), sticky="w")
-        ctk.CTkLabel(pg, text="Scan the demos folder and remove duplicate replay files.",
-                     font=ctk.CTkFont(size=11), text_color=C_DIM, anchor="w"
-                     ).grid(row=19, column=0, columnspan=3,
-                            padx=20, pady=(0, 24), sticky="w")
 
     # ── page switching ────────────────────────────────────────────────────────
 
@@ -5323,6 +5315,7 @@ class App(ctk.CTk):
                                 self.after(2000, self._fetch_quota)
                                 self.after(0, self._show_toast,
                                            f"✓ Uploaded: {name}")
+                                self.after(3000, lambda: self._dedup(silent=True))
                         elif status == "failed":
                             def _handle_fail(_p=p, _n=n):
                                 attempt = self._retry_queue.get(_n, 0) + 1
@@ -6013,7 +6006,7 @@ class App(ctk.CTk):
         label = "Done" if self._download_active else "Stopped"
         self.after(0, self._log,
                    f"[download] {label} — {total_dl} downloaded, {total_skip} skipped.")
-        if self._download_active and total_dl > 0:
+        if self._download_active:
             self.after(0, self._dedup, folder)
 
     def _fetch_quota(self):
