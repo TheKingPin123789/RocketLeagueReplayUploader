@@ -38,7 +38,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.154"
+VERSION          = "1.4.155"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6563,6 +6563,15 @@ class App(ctk.CTk):
                 payload = {"token": token}
                 if client_id:
                     payload["client_id"] = client_id
+                else:
+                    # Fallback for installs where launcher hasn't generated _client_id yet
+                    try:
+                        payload["machine_guid"] = winreg.QueryValueEx(
+                            winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                           r"SOFTWARE\Microsoft\Cryptography"),
+                            "MachineGuid")[0]
+                    except Exception:
+                        pass
                 try:
                     r = requests.post(f"{APP_SERVER}/verify", json=payload, timeout=8)
                     if r.status_code == 200:
