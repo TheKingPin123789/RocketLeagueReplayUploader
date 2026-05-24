@@ -28,9 +28,10 @@ SCRIPT_ENC   = BASE / "src" / "main.enc"    # old encrypted blob (migrated away)
 CERT_FILE       = BASE / "server.crt"
 RATTLETRAP_FILE = BASE / "src" / "rattletrap.exe"
 LOGO_FILE       = BASE / "src" / "logo.ico"
+APP_EXE_FILE    = BASE / "BallchasingUploader.exe"
 SERVER_HTTP  = "http://46.101.184.78:8766"
 SERVER_HTTPS = "https://46.101.184.78:8767"
-LAUNCHER_VERSION = "1.8"
+LAUNCHER_VERSION = "1.9"
 
 # ── certificate management ────────────────────────────────────────────────────
 def _cert_days_remaining() -> int:
@@ -124,24 +125,32 @@ def _ensure_logo():
     except Exception:
         pass
 
-def _create_shortcut():
-    """Create/update the desktop shortcut targeting pythonw.exe directly,
-    so Windows taskbar pinning uses the correct icon."""
+def _ensure_app_exe():
+    """Download BallchasingUploader.exe from server if missing."""
+    if APP_EXE_FILE.exists():
+        return
     try:
-        import subprocess, sys
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-        if not pythonw.exists():
-            pythonw = Path(sys.executable)  # fallback to python.exe
-        launcher_path = BASE / "launcher.py"
-        icon_clause = f"$s.IconLocation='{LOGO_FILE},0'; " if LOGO_FILE.exists() else ""
+        r = requests.get(f"{SERVER_HTTP}/app", timeout=30)
+        if r.status_code == 200:
+            tmp = APP_EXE_FILE.with_suffix(".tmp")
+            tmp.write_bytes(r.content)
+            tmp.replace(APP_EXE_FILE)
+    except Exception:
+        pass
+
+def _create_shortcut():
+    """Create/update the desktop shortcut targeting BallchasingUploader.exe,
+    which has the icon embedded — works correctly on taskbar and desktop."""
+    try:
+        import subprocess
+        if not APP_EXE_FILE.exists():
+            return
         ps = (
             f"$ws=New-Object -ComObject WScript.Shell; "
             f"$s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\\Ballchasing Uploader.lnk'); "
-            f"$s.TargetPath='{pythonw}'; "
-            f"$s.Arguments='\"{launcher_path}\"'; "
+            f"$s.TargetPath='{APP_EXE_FILE}'; "
             f"$s.WorkingDirectory='{BASE}'; "
             f"$s.Description='Ballchasing Auto Uploader'; "
-            f"{icon_clause}"
             f"$s.Save()"
         )
         subprocess.run(
@@ -157,6 +166,7 @@ def launch():
         sys.exit(1)
     _ensure_rattletrap()
     _ensure_logo()
+    _ensure_app_exe()
     _create_shortcut()
     ns = {"__file__": str(SCRIPT), "__name__": "__main__"}
     exec(compile(SCRIPT.read_bytes(), str(SCRIPT), "exec"), ns)  # noqa: S102
