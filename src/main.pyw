@@ -38,7 +38,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.151"
+VERSION          = "1.4.152"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -4022,6 +4022,7 @@ class App(ctk.CTk):
     def _show_main(self):
         self.settings_page.pack_forget()
         self.replays_page.pack_forget()
+        self.detail_page.pack_forget()
         self.main_page.pack(fill="both", expand=True)
         self.nav_btn.configure(text="⚙")
         self._current_page = "main"
