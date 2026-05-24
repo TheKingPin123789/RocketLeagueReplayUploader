@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.157"
+VERSION          = "1.4.158"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -726,12 +726,13 @@ def card_height(info: dict | None) -> int:
     d = _dims()
     if not info:
         return d["name_h"] + d["tag_h"] + d["meta_h"] + d["meta2_h"] + d["footer_h"]
+    players = info.get("players") or []
     if _COMPACT:
-        blue   = len([p for p in info["players"] if p["team"] == 0])
-        orange = len([p for p in info["players"] if p["team"] == 1])
+        blue   = len([p for p in players if p["team"] == 0])
+        orange = len([p for p in players if p["team"] == 1])
         return d["name_h"] + d["tag_h"] + d["meta_h"] + d["meta2_h"] + (max(blue, 1) + max(orange, 1)) * d["player_h"] + d["footer_h"]
-    rows = max(len([p for p in info["players"] if p["team"] == 0]),
-               len([p for p in info["players"] if p["team"] == 1]), 1)
+    rows = max(len([p for p in players if p["team"] == 0]),
+               len([p for p in players if p["team"] == 1]), 1)
     return d["name_h"] + d["meta_h"] + rows * d["player_h"] + d["footer_h"]
 
 def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
