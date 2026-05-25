@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.173"
+VERSION          = "1.4.174"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -265,13 +265,15 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                 if norm not in rl_to_file:
                     rl_to_file[norm] = rp.name
 
+        local_count = len(rl_to_file)
         if log_fn:
-            log_fn(f"[index] Scanning Ballchasing for {len(rl_to_file)} local replay(s)…")
+            log_fn(f"[index] {local_count} local replay(s) without bc_id — scanning Ballchasing…")
 
         url = "https://ballchasing.com/api/replays"
         params = {"uploader": "me", "count": 200,
                   "sort-by": "replay-date", "sort-dir": "desc"}
         saved = 0
+        scanned = 0
         page = 0
 
         while url:
@@ -288,7 +290,9 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                 if log_fn: log_fn(f"[index] error: {e}", "red")
                 break
 
-            for replay in data.get("list", []):
+            page_list = data.get("list", [])
+            scanned += len(page_list)
+            for replay in page_list:
                 bc_id = replay.get("id", "")
                 if not bc_id or bc_id in known_bc_ids:
                     continue
@@ -299,6 +303,9 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                     known_bc_ids.add(bc_id)
                     saved += 1
 
+            if log_fn and page % 5 == 0:
+                log_fn(f"[index] Scanned {scanned} Ballchasing replays, matched {saved} so far…")
+
             url = data.get("next", "")
 
         # Write all matches in a single atomic operation at the end
@@ -307,7 +314,7 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                 _atomic_write_json(UPLOAD_IDS_FILE, local_ids)
 
         if log_fn:
-            log_fn(f"[index] Done — matched {saved} new replay(s) to Ballchasing IDs.")
+            log_fn(f"[index] Done — scanned {scanned} BC replays, matched {saved} / {local_count} local.")
         return saved
     except Exception as e:
         if log_fn: log_fn(f"[index] failed: {e}", "red")
@@ -2428,17 +2435,19 @@ class App(ctk.CTk):
         cached  = load_cached(card["filename"])
         bc_info = load_bc_stats(bc_id)
 
+        fn = card["filename"]
+
         # 1. Render immediately with whatever we have
         if cached:
-            # No bc_id → show upload button immediately (Ballchasing search API
-            # doesn't support filtering by rocket-league-id reliably, so we skip
-            # the lookup and let "Upload & fetch stats" handle both new and duplicate)
+            if not bc_id:
+                self._log(f"[detail] {fn} — no Ballchasing ID saved, showing upload button")
             self._render_detail(cached, card, bc_info,
                                 show_upload_btn=(not bc_id))
 
         if bc_id and bc_info is None:
             # bc_id known but stats not cached yet — fetch with retries (Ballchasing
             # may still be processing a freshly uploaded replay)
+            self._log(f"[detail] {fn} — fetching stats from Ballchasing…")
             def _fetch(c=card, ci=cached, bid=bc_id):
                 api_key = self.config_data.get("api_key", "")
                 bc = None
@@ -2447,8 +2456,15 @@ class App(ctk.CTk):
                     if bc:
                         break
                     if attempt < 5:
+                        self.after(0, self._log,
+                                   f"[detail] {c['filename']} — stats not ready yet, retrying… ({attempt+1}/6)")
                         time.sleep(5)
                 if self._current_card and self._current_card["filename"] == c["filename"]:
+                    if bc:
+                        self.after(0, self._log, f"[detail] {c['filename']} — stats loaded ✓")
+                    else:
+                        self.after(0, self._log,
+                                   f"[detail] {c['filename']} — could not load stats", "red")
                     self.after(0, lambda: self._render_detail(ci, c, bc,
                                                               show_upload_btn=(bc is None)))
             threading.Thread(target=_fetch, daemon=True).start()
