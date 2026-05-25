@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.172"
+VERSION          = "1.4.173"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -295,12 +295,16 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                 norm = _norm_rl_id(replay.get("rocket_league_id") or "")
                 filename = rl_to_file.get(norm, "")
                 if filename and filename not in local_ids:
-                    save_upload_id(filename, bc_id)
                     local_ids[filename] = bc_id
                     known_bc_ids.add(bc_id)
                     saved += 1
 
             url = data.get("next", "")
+
+        # Write all matches in a single atomic operation at the end
+        if saved:
+            with _upload_ids_lock:
+                _atomic_write_json(UPLOAD_IDS_FILE, local_ids)
 
         if log_fn:
             log_fn(f"[index] Done — matched {saved} new replay(s) to Ballchasing IDs.")
