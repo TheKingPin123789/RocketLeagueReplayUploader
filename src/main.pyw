@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.166"
+VERSION          = "1.4.167"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -242,21 +242,34 @@ def fetch_bc_stats(bc_id: str, api_key: str) -> dict | None:
     cache_file = CACHE_DIR / f"bc_{bc_id}.json"
     if cache_file.exists():
         try:
-            with open(cache_file, encoding="utf-8") as f:
-                return json.load(f)
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            # Don't use cache if it was saved while still pending (no player stats)
+            if data.get("status") != "ok" or not (
+                data.get("blue", {}).get("players") or
+                data.get("orange", {}).get("players")
+            ):
+                cache_file.unlink(missing_ok=True)
+            else:
+                return data
         except Exception:
             pass
     try:
-        import urllib.request as _ur
-        req = _ur.Request(
+        r = requests.get(
             f"https://ballchasing.com/api/replays/{bc_id}",
-            headers={"Authorization": api_key}
-        )
-        with _ur.urlopen(req, timeout=30) as r:
-            data = json.loads(r.read())
-        CACHE_DIR.mkdir(exist_ok=True)
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+            headers={"Authorization": api_key},
+            timeout=30)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        # Only cache if stats are ready
+        if data.get("status") == "ok" and (
+            data.get("blue", {}).get("players") or
+            data.get("orange", {}).get("players")
+        ):
+            CACHE_DIR.mkdir(exist_ok=True)
+            cache_file.write_text(json.dumps(data), encoding="utf-8")
+        else:
+            return None   # still processing — don't cache, caller should retry
         return data
     except Exception:
         return None
@@ -2344,12 +2357,21 @@ class App(ctk.CTk):
                                 show_upload_btn=(not bc_id))
 
         if bc_id and bc_info is None:
-            # bc_id known but stats not cached yet — fetch silently then re-render
+            # bc_id known but stats not cached yet — fetch with retries (Ballchasing
+            # may still be processing a freshly uploaded replay)
             def _fetch(c=card, ci=cached, bid=bc_id):
                 api_key = self.config_data.get("api_key", "")
-                bc = fetch_bc_stats(bid, api_key)
+                bc = None
+                for attempt in range(6):   # try up to ~30s
+                    bc = fetch_bc_stats(bid, api_key)
+                    if bc:
+                        break
+                    if attempt < 5:
+                        time.sleep(5)
                 if self._current_card and self._current_card["filename"] == c["filename"]:
-                    self.after(0, lambda: self._render_detail(ci, c, bc))
+                    # if still None after retries show upload btn so user can retry
+                    self.after(0, lambda: self._render_detail(ci, c, bc,
+                                                              show_upload_btn=(bc is None)))
             threading.Thread(target=_fetch, daemon=True).start()
 
         if not cached:
