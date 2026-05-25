@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.164"
+VERSION          = "1.4.165"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -719,11 +719,15 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
             if resp.status_code in (201, 409):
                 if on_bc_id:
                     try:
-                        bc_id = resp.json().get("id", "")
+                        body = resp.json()
+                        on_status(name, f"[debug] {resp.status_code} body={body}")
+                        bc_id = body.get("id", "")
                         if bc_id:
                             on_bc_id(bc_id)
-                    except Exception:
-                        pass
+                        else:
+                            on_status(name, f"[debug] no 'id' in body")
+                    except Exception as e:
+                        on_status(name, f"[debug] parse error: {e}")
                 on_status(name, "uploaded" if resp.status_code == 201 else "duplicate"); return
             on_status(name, f"error {resp.status_code}")
         except requests.RequestException:
