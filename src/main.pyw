@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.168"
+VERSION          = "1.4.169"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -2373,7 +2373,7 @@ class App(ctk.CTk):
                                                               show_upload_btn=(bc is None)))
             threading.Thread(target=_fetch, daemon=True).start()
 
-        elif not bc_id and already and self.config_data.get("api_key", "").strip():
+        elif not bc_id and self.config_data.get("api_key", "").strip():
             # Replay was previously uploaded but bc_id is missing (e.g. fresh install).
             # Silently attempt upload — will get 409 + bc_id from Ballchasing, then
             # load stats automatically without the user having to click anything.
