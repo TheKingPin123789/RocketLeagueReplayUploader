@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.159"
+VERSION          = "1.4.160"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -5158,10 +5158,13 @@ class App(ctk.CTk):
     _APP_KEY  = "BallchasingUploader"
 
     def _launcher_cmd(self) -> str:
-        # launcher.py lives one level above src/ (i.e. BASE_DIR.parent).
-        # BASE_DIR is the src/ folder containing main.pyw.
-        pythonw  = Path(sys.executable).with_name("pythonw.exe")
-        if not pythonw.exists():          # some Python installs lack pythonw.exe
+        # If the compiled exe exists, register that directly — no Python needed.
+        exe = BASE_DIR.parent / "BallchasingUploader.exe"
+        if exe.exists():
+            return f'"{exe}"'
+        # Fallback: launch via pythonw when running from source.
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if not pythonw.exists():
             pythonw = Path(sys.executable)
         launcher = BASE_DIR.parent / "launcher.py"
         return f'"{pythonw}" "{launcher}"'
