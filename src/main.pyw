@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.165"
+VERSION          = "1.4.166"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -719,15 +719,11 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
             if resp.status_code in (201, 409):
                 if on_bc_id:
                     try:
-                        body = resp.json()
-                        on_status(name, f"[debug] {resp.status_code} body={body}")
-                        bc_id = body.get("id", "")
+                        bc_id = resp.json().get("id", "")
                         if bc_id:
                             on_bc_id(bc_id)
-                        else:
-                            on_status(name, f"[debug] no 'id' in body")
-                    except Exception as e:
-                        on_status(name, f"[debug] parse error: {e}")
+                    except Exception:
+                        pass
                 on_status(name, "uploaded" if resp.status_code == 201 else "duplicate"); return
             on_status(name, f"error {resp.status_code}")
         except requests.RequestException:
@@ -2341,7 +2337,11 @@ class App(ctk.CTk):
 
         # 1. Render immediately with whatever we have
         if cached:
-            self._render_detail(cached, card, bc_info)
+            # No bc_id → show upload button immediately (Ballchasing search API
+            # doesn't support filtering by rocket-league-id reliably, so we skip
+            # the lookup and let "Upload & fetch stats" handle both new and duplicate)
+            self._render_detail(cached, card, bc_info,
+                                show_upload_btn=(not bc_id))
 
         if bc_id and bc_info is None:
             # bc_id known but stats not cached yet — fetch silently then re-render
@@ -2351,41 +2351,6 @@ class App(ctk.CTk):
                 if self._current_card and self._current_card["filename"] == c["filename"]:
                     self.after(0, lambda: self._render_detail(ci, c, bc))
             threading.Thread(target=_fetch, daemon=True).start()
-
-        elif not bc_id:
-            # No bc_id yet — look it up on demand then fetch stats
-            def _lookup(c=card, ci=cached):
-                api_key = self.config_data.get("api_key", "").strip()
-                if not api_key:
-                    return
-                rl_id = (ci or {}).get("rl_id", "")
-                if not rl_id:
-                    info = parse_card_data(c["path"])
-                    if info:
-                        save_cache(c["filename"], info)
-                        self.after(0, lambda i=info: self._update_card_info(c, i))
-                        ci = info
-                    rl_id = (ci or {}).get("rl_id", "")
-                # Last resort: the filename IS the Rocket League ID
-                if not rl_id:
-                    stem = Path(c["path"]).stem
-                    if len(stem) >= 16:   # looks like a GUID
-                        rl_id = stem
-                self.after(0, self._log, f"[lookup] searching for {c['filename']} (rl_id={rl_id!r})")
-                bid = lookup_bc_id(rl_id, api_key, _log=lambda m, t=None: self.after(0, self._log, m, t))
-                if bid:
-                    save_upload_id(c["filename"], bid)
-                    self.after(0, lambda b=bid: self._btn_bc.configure(
-                        state="normal", text="Ballchasing"))
-                    bc = fetch_bc_stats(bid, api_key)
-                    if self._current_card and self._current_card["filename"] == c["filename"]:
-                        self.after(0, lambda: self._render_detail(ci, c, bc))
-                else:
-                    self.after(0, self._log, f"[lookup] not found on Ballchasing", "red")
-                    # Not on Ballchasing — show upload prompt in detail view
-                    if self._current_card and self._current_card["filename"] == c["filename"]:
-                        self.after(0, lambda: self._render_detail(ci, c, None, show_upload_btn=True))
-            threading.Thread(target=_lookup, daemon=True).start()
 
         if not cached:
             # No header cache — parse first, then re-enter the flow above
