@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.171"
+VERSION          = "1.4.172"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1397,7 +1397,7 @@ class App(ctk.CTk):
         self.after(1500, self._scan_mirror_folder)
         self.after(2000, lambda: self._dedup(silent=True))
         self.after(3000, self._check_first_run)
-        self.after(5000, self._bg_build_index)
+        self.after(1500, self._bg_build_index)
         if self.config_data.get("launch_with_rl", False):
             self._rl_poll_thread_running = True
             threading.Thread(target=self._rl_poll_loop, daemon=True).start()
@@ -6301,12 +6301,21 @@ class App(ctk.CTk):
 
     def _bg_build_index(self):
         """Background: fetch user's BC replay list and populate upload_ids.json.
-        Read-only — no file uploads."""
+        Read-only — no file uploads. Skips if all local replays already have bc_ids."""
         api_key = self.config_data.get("api_key", "").strip()
         folder  = self.config_data.get("demos_folder", "").strip()
-        if not api_key:
+        if not api_key or not folder:
             return
         def _run():
+            # Count how many local replays are missing a bc_id
+            existing = set(load_upload_ids().keys())
+            try:
+                missing = sum(1 for p in Path(folder).glob("*.replay")
+                              if p.name not in existing)
+            except Exception:
+                missing = 1  # assume there's work to do if we can't check
+            if missing == 0:
+                return
             build_upload_id_index(
                 api_key, demos_folder=folder,
                 log_fn=lambda m, t=None: self.after(0, self._log, m, t))
