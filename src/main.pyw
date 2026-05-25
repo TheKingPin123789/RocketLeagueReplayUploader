@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.176"
+VERSION          = "1.4.177"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -271,8 +271,37 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
         local_count = len(rl_to_file)
         if local_count == 0:
             return 0
+
+        # Find the oldest local replay date to use as a scan cutoff.
+        # BC returns replays sorted newest-first, so once we pass this date
+        # (with a 3-day buffer) the remaining replays can't be here.
+        oldest_dt: datetime | None = None
+        for cf in CACHE_DIR.glob("*.json"):
+            if cf.name.startswith("bc_"):
+                continue
+            try:
+                d = json.loads(cf.read_text(encoding="utf-8")).get("date", "")
+                if d:
+                    dt = datetime.strptime(d[:19], "%Y-%m-%d %H:%M:%S")
+                    if oldest_dt is None or dt < oldest_dt:
+                        oldest_dt = dt
+            except Exception:
+                pass
+        # Also check file mtimes as fallback when cache has no dates
+        if demos_folder and oldest_dt is None:
+            for rp in Path(demos_folder).glob("*.replay"):
+                try:
+                    dt = datetime.fromtimestamp(rp.stat().st_mtime)
+                    if oldest_dt is None or dt < oldest_dt:
+                        oldest_dt = dt
+                except Exception:
+                    pass
+        cutoff_dt = (oldest_dt - timedelta(days=3)) if oldest_dt else None
+
         if log_fn:
-            log_fn(f"[index] {local_count} local replay(s) without bc_id — scanning Ballchasing…")
+            cutoff_str = cutoff_dt.strftime("%Y-%m-%d") if cutoff_dt else "none"
+            log_fn(f"[index] {local_count} local replay(s) without bc_id — "
+                   f"scanning Ballchasing (cutoff {cutoff_str})…")
 
         url = "https://ballchasing.com/api/replays"
         params = {"uploader": "me", "count": 200,
@@ -331,6 +360,22 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                     log_fn(f"[index] {remaining} replay(s) not found on Ballchasing after "
                            f"{scanned} scanned — stopping.")
                 break
+
+            # Stop when BC replays go older than the oldest local replay minus 3 days
+            if cutoff_dt and page_list:
+                last_date_str = page_list[-1].get("date", "")
+                if last_date_str:
+                    try:
+                        last_dt = datetime.fromisoformat(
+                            last_date_str.replace("Z", "+00:00")
+                        ).replace(tzinfo=None)
+                        if last_dt < cutoff_dt:
+                            if log_fn:
+                                log_fn(f"[index] Reached date cutoff "
+                                       f"({cutoff_dt.strftime('%Y-%m-%d')}), stopping.")
+                            break
+                    except Exception:
+                        pass
 
             url = data.get("next", "")
 
