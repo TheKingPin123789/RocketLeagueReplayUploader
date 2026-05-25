@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.175"
+VERSION          = "1.4.176"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -280,6 +280,8 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
         saved = 0
         scanned = 0
         page = 0
+        pages_since_last_match = 0
+        MAX_EMPTY_PAGES = 10   # stop after 10 consecutive pages (2 000 replays) with no new matches
 
         while url:
             try:
@@ -296,7 +298,10 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                 break
 
             page_list = data.get("list", [])
+            if not page_list:
+                break
             scanned += len(page_list)
+            matched_this_page = 0
             for replay in page_list:
                 bc_id = replay.get("id", "")
                 if not bc_id or bc_id in known_bc_ids:
@@ -307,9 +312,24 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                     local_ids[filename] = bc_id
                     known_bc_ids.add(bc_id)
                     saved += 1
+                    matched_this_page += 1
+
+            if matched_this_page:
+                pages_since_last_match = 0
+            else:
+                pages_since_last_match += 1
 
             # Stop early once every local replay has been matched
             if saved >= local_count:
+                break
+
+            # Stop if many consecutive pages have no matches — remaining replays
+            # are likely not on Ballchasing
+            if pages_since_last_match >= MAX_EMPTY_PAGES:
+                remaining = local_count - saved
+                if log_fn:
+                    log_fn(f"[index] {remaining} replay(s) not found on Ballchasing after "
+                           f"{scanned} scanned — stopping.")
                 break
 
             url = data.get("next", "")
