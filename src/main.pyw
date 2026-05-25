@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.160"
+VERSION          = "1.4.161"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -696,7 +696,7 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
                     data={"visibility": config.get("visibility", "unlisted")},
                     timeout=60)
             if resp.status_code in (201, 409):
-                if resp.status_code == 201 and on_bc_id:
+                if on_bc_id:
                     try:
                         bc_id = resp.json().get("id", "")
                         if bc_id:
@@ -2432,8 +2432,18 @@ class App(ctk.CTk):
             upload(card["path"], self.config_data, self.uploaded, on_status,
                    force=True, on_bc_id=on_bc_id)
 
-            if bc_id_holder:
-                bc_id = bc_id_holder[0]
+            bc_id = bc_id_holder[0] if bc_id_holder else ""
+            if not bc_id:
+                # 409 without ID in body (or upload failed) — look up by rl_id
+                cached_info = load_cached(card["filename"])
+                rl_id = (cached_info or {}).get("rl_id", "")
+                if rl_id:
+                    bc_id = lookup_bc_id(rl_id, api_key)
+                    if bc_id:
+                        save_upload_id(card["filename"], bc_id)
+                        self.after(0, lambda b=bc_id: self._btn_bc.configure(
+                            state="normal", text="Ballchasing"))
+            if bc_id:
                 def _mark_uploaded(fn=card["filename"]):
                     self.uploaded.add(fn)
                     self._schedule_save_uploaded()
