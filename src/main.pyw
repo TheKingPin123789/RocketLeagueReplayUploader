@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.174"
+VERSION          = "1.4.175"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -265,7 +265,12 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                 if norm not in rl_to_file:
                     rl_to_file[norm] = rp.name
 
+        # Remove entries that already have a bc_id — nothing to do for them
+        rl_to_file = {k: v for k, v in rl_to_file.items() if v not in local_ids}
+
         local_count = len(rl_to_file)
+        if local_count == 0:
+            return 0
         if log_fn:
             log_fn(f"[index] {local_count} local replay(s) without bc_id — scanning Ballchasing…")
 
@@ -303,8 +308,9 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                     known_bc_ids.add(bc_id)
                     saved += 1
 
-            if log_fn and page % 5 == 0:
-                log_fn(f"[index] Scanned {scanned} Ballchasing replays, matched {saved} so far…")
+            # Stop early once every local replay has been matched
+            if saved >= local_count:
+                break
 
             url = data.get("next", "")
 
