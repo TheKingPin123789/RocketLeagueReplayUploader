@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.178"
+VERSION          = "1.4.179"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -113,8 +113,9 @@ def _fit_text(text: str, family: str, size: int, weight: str, max_px: int) -> st
 C_BG          = ("#E4E4E4", "#272727")
 C_CARD        = ("#EFEFEF", "#1D1D1F")
 C_BORDER      = ("#E0E0E5", "#2C2C2E")
-C_BORDER_FAIL = ("#F5010A", "#F5010A")
-C_CARD_FAIL   = ("#FF8888", "#3E0000")
+C_BORDER_FAIL   = ("#F5010A", "#F5010A")
+C_CARD_FAIL     = ("#FF8888", "#3E0000")
+C_BORDER_NO_BC  = ("#CC3300", "#CC3300")   # replay has no Ballchasing ID
 C_DIVIDER     = ("#CDCDD8", "#525256")
 C_SCORE_COL   = ("#E9E9E9", "#242426")
 C_NAME        = ("#000000", "#FFFFFF")
@@ -134,8 +135,9 @@ _DEFAULT_COLORS: dict[str, tuple] = {
     "C_BG":          ("#E4E4E4", "#272727"),
     "C_CARD":        ("#EFEFEF", "#1D1D1F"),
     "C_BORDER":      ("#E0E0E5", "#2C2C2E"),
-    "C_BORDER_FAIL": ("#F5010A", "#F5010A"),
-    "C_CARD_FAIL":   ("#FF8888", "#3E0000"),
+    "C_BORDER_FAIL":  ("#F5010A", "#F5010A"),
+    "C_CARD_FAIL":    ("#FF8888", "#3E0000"),
+    "C_BORDER_NO_BC": ("#CC3300", "#CC3300"),
     "C_DIVIDER":     ("#CDCDD8", "#525256"),
     "C_SCORE_COL":   ("#E9E9E9", "#242426"),
     "C_NAME":        ("#000000", "#FFFFFF"),
@@ -168,8 +170,9 @@ def _card_colors() -> dict:
         "bg":          _c(C_BG),
         "card":        _c(C_CARD),
         "border":      _c(C_BORDER),
-        "border_fail": _c(C_BORDER_FAIL),
-        "card_fail":   _c(C_CARD_FAIL),
+        "border_fail":   _c(C_BORDER_FAIL),
+        "card_fail":     _c(C_CARD_FAIL),
+        "border_no_bc":  _c(C_BORDER_NO_BC),
         "divider":     _c(C_DIVIDER),
         "score_col":   _c(C_SCORE_COL),
         "name":        _c(C_NAME),
@@ -958,6 +961,8 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
     # ── card background + border ──────────────────────────────────────────────
     if entry.get("failed"):
         bg, bdr, bdr_w = cc["card_fail"], cc["border_fail"], 2
+    elif not entry.get("bc_id") and not entry.get("parsing"):
+        bg, bdr, bdr_w = cc["card"], cc["border_no_bc"], 2
     else:
         bg, bdr, bdr_w = cc["card"], cc["border"], 1
     canvas.create_rectangle(x0, y, x1, y+h, fill=bg, outline=bdr, width=bdr_w)
@@ -2191,6 +2196,7 @@ class App(ctk.CTk):
             "info":     info if not needs_parse else None,
             "type":     replay_type(info) if info and not needs_parse else "",
             "uploaded": filename in self.uploaded,
+            "bc_id":    load_upload_ids().get(filename, ""),
             "height":   card_height(info if not needs_parse else None),
             "parsing":  needs_parse,
             "failed":   False,
@@ -2269,6 +2275,7 @@ class App(ctk.CTk):
                     "info":     info,
                     "type":     replay_type(info) if info else "",
                     "uploaded": path.name in self.uploaded,
+                    "bc_id":    upload_ids.get(path.name, ""),
                     "height":   card_height(info),
                     "parsing":  needs_parse,
                     "failed":   False,
@@ -5531,7 +5538,9 @@ class App(ctk.CTk):
                                     self._log(f"  ✗ gave up after 6 retries: {_n}", "red")
                             self.after(0, _handle_fail)
                     upload(p, self.config_data, self.uploaded, on_status,
-                           on_bc_id=lambda bc_id, fn=n: save_upload_id(fn, bc_id))
+                           on_bc_id=lambda bc_id, fn=n: (
+                               save_upload_id(fn, bc_id),
+                               self.after(0, self._set_card_bc_id, fn, bc_id)))
 
                 threading.Thread(target=do_upload, daemon=True).start()
 
@@ -6356,7 +6365,9 @@ class App(ctk.CTk):
 
         threading.Thread(
             target=lambda: upload(path, self.config_data, self.uploaded, on_status,
-                                  on_bc_id=lambda bc_id: save_upload_id(filename, bc_id)),
+                                  on_bc_id=lambda bc_id, fn=filename: (
+                                      save_upload_id(fn, bc_id),
+                                      self.after(0, self._set_card_bc_id, fn, bc_id))),
             daemon=True).start()
 
     # ── right-click context menu on replay cards ──────────────────────────────
@@ -6412,10 +6423,33 @@ class App(ctk.CTk):
                 missing = 1  # assume there's work to do if we can't check
             if missing == 0:
                 return
-            build_upload_id_index(
+            saved = build_upload_id_index(
                 api_key, demos_folder=folder,
                 log_fn=lambda m, t=None: self.after(0, self._log, m, t))
+            if saved:
+                # Refresh bc_id on all in-memory cards so borders update
+                self.after(0, self._refresh_card_bc_ids)
         threading.Thread(target=_run, daemon=True).start()
+
+    def _refresh_card_bc_ids(self):
+        """After index scan, update bc_id on every in-memory card and redraw."""
+        ids = load_upload_ids()
+        changed = False
+        for card in self._cards:
+            new_id = ids.get(card["filename"], "")
+            if card.get("bc_id") != new_id:
+                card["bc_id"] = new_id
+                changed = True
+        if changed:
+            self._schedule_redraw()
+
+    def _set_card_bc_id(self, filename: str, bc_id: str):
+        """Update a single card's bc_id in memory and redraw so the red border clears."""
+        idx = self._card_index.get(filename)
+        if idx is not None and idx < len(self._cards):
+            if self._cards[idx].get("bc_id") != bc_id:
+                self._cards[idx]["bc_id"] = bc_id
+                self._schedule_redraw()
 
     def _check_first_run(self):
         api_key = self.config_data.get("api_key", "").strip()
