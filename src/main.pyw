@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.167"
+VERSION          = "1.4.168"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -2369,10 +2369,40 @@ class App(ctk.CTk):
                     if attempt < 5:
                         time.sleep(5)
                 if self._current_card and self._current_card["filename"] == c["filename"]:
-                    # if still None after retries show upload btn so user can retry
                     self.after(0, lambda: self._render_detail(ci, c, bc,
                                                               show_upload_btn=(bc is None)))
             threading.Thread(target=_fetch, daemon=True).start()
+
+        elif not bc_id and already and self.config_data.get("api_key", "").strip():
+            # Replay was previously uploaded but bc_id is missing (e.g. fresh install).
+            # Silently attempt upload — will get 409 + bc_id from Ballchasing, then
+            # load stats automatically without the user having to click anything.
+            def _silent_get_bc_id(c=card, ci=cached):
+                api_key = self.config_data.get("api_key", "").strip()
+                bc_id_holder = []
+
+                def on_bc_id(bid):
+                    bc_id_holder.append(bid)
+                    save_upload_id(c["filename"], bid)
+                    self.after(0, lambda b=bid: self._btn_bc.configure(
+                        state="normal", text="Ballchasing"))
+
+                upload(c["path"], self.config_data, self.uploaded,
+                       lambda *_: None, force=True, on_bc_id=on_bc_id)
+
+                if bc_id_holder:
+                    bid = bc_id_holder[0]
+                    bc = None
+                    for attempt in range(6):
+                        bc = fetch_bc_stats(bid, api_key)
+                        if bc:
+                            break
+                        if attempt < 5:
+                            time.sleep(5)
+                    if self._current_card and self._current_card["filename"] == c["filename"]:
+                        self.after(0, lambda: self._render_detail(ci, c, bc,
+                                                                  show_upload_btn=(bc is None)))
+            threading.Thread(target=_silent_get_bc_id, daemon=True).start()
 
         if not cached:
             # No header cache — parse first, then re-enter the flow above
