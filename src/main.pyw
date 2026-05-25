@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.163"
+VERSION          = "1.4.164"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -280,6 +280,13 @@ def _norm_rl_id(s: str) -> str:
     """Normalise a Rocket League ID: uppercase, strip dashes and braces."""
     return s.upper().replace("-", "").replace("{", "").replace("}", "")
 
+def _to_uuid(s: str) -> str:
+    """Convert a 32-char hex ID to UUID format (8-4-4-4-12) if needed."""
+    h = _norm_rl_id(s)
+    if len(h) == 32:
+        return f"{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+    return s  # already has dashes or wrong length — return as-is
+
 def lookup_bc_id(rl_id: str, api_key: str, _log=None) -> str:
     """Find a replay's Ballchasing ID by its Rocket League internal ID.
     Tries uploader=me first, then falls back to any uploader."""
@@ -310,7 +317,9 @@ def lookup_bc_id(rl_id: str, api_key: str, _log=None) -> str:
             if _log: _log(f"[lookup] exception: {e}", "red")
             return ""
 
-    for qid in dict.fromkeys([rl_id, norm]):
+    uuid_fmt = _to_uuid(rl_id)
+    # Ballchasing requires UUID format with dashes — try that first, then fallbacks
+    for qid in dict.fromkeys([uuid_fmt, rl_id, norm]):
         result = _search(qid, "&uploader=me") or _search(qid, "")
         if result:
             return result
