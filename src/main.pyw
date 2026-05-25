@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.162"
+VERSION          = "1.4.163"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -280,36 +280,37 @@ def _norm_rl_id(s: str) -> str:
     """Normalise a Rocket League ID: uppercase, strip dashes and braces."""
     return s.upper().replace("-", "").replace("{", "").replace("}", "")
 
-def lookup_bc_id(rl_id: str, api_key: str) -> str:
+def lookup_bc_id(rl_id: str, api_key: str, _log=None) -> str:
     """Find a replay's Ballchasing ID by its Rocket League internal ID.
     Tries uploader=me first, then falls back to any uploader."""
     if not rl_id or not api_key:
+        if _log: _log(f"[lookup] skipped — rl_id={repr(rl_id)} api_key={'set' if api_key else 'missing'}", "red")
         return ""
-    import urllib.request as _ur, urllib.parse as _up
 
     norm = _norm_rl_id(rl_id)
 
     def _search(query_id: str, extra: str) -> str:
         try:
-            url = (f"https://ballchasing.com/api/replays"
-                   f"?rocket-league-id={_up.quote(query_id)}&count=1{extra}")
-            req = _ur.Request(url, headers={"Authorization": api_key})
-            with _ur.urlopen(req, timeout=15) as r:
-                data = json.loads(r.read())
-            lst = data.get("list", [])
+            url = f"https://ballchasing.com/api/replays?rocket-league-id={query_id}&count=1{extra}"
+            r = requests.get(url, headers={"Authorization": api_key}, timeout=15)
+            if _log: _log(f"[lookup] GET {url} → {r.status_code}")
+            if r.status_code != 200:
+                return ""
+            lst = r.json().get("list", [])
             if not lst:
                 return ""
             hit = lst[0]
-            # Verify the returned replay matches — normalise both sides
             returned = _norm_rl_id(hit.get("rocket_league_id") or "")
+            if _log: _log(f"[lookup] hit id={hit.get('id')} rocket_league_id={hit.get('rocket_league_id')!r}")
             if returned and returned != norm:
+                if _log: _log(f"[lookup] id mismatch: {returned!r} != {norm!r}", "red")
                 return ""
             return hit["id"]
-        except Exception:
+        except Exception as e:
+            if _log: _log(f"[lookup] exception: {e}", "red")
             return ""
 
-    # Try with the id as-is, then with the normalised (no dashes) form
-    for qid in dict.fromkeys([rl_id, norm]):          # dedup preserving order
+    for qid in dict.fromkeys([rl_id, norm]):
         result = _search(qid, "&uploader=me") or _search(qid, "")
         if result:
             return result
@@ -2357,7 +2358,8 @@ class App(ctk.CTk):
                     stem = Path(c["path"]).stem
                     if len(stem) >= 16:   # looks like a GUID
                         rl_id = stem
-                bid = lookup_bc_id(rl_id, api_key)
+                self.after(0, self._log, f"[lookup] searching for {c['filename']} (rl_id={rl_id!r})")
+                bid = lookup_bc_id(rl_id, api_key, _log=lambda m, t=None: self.after(0, self._log, m, t))
                 if bid:
                     save_upload_id(c["filename"], bid)
                     self.after(0, lambda b=bid: self._btn_bc.configure(
@@ -2366,6 +2368,7 @@ class App(ctk.CTk):
                     if self._current_card and self._current_card["filename"] == c["filename"]:
                         self.after(0, lambda: self._render_detail(ci, c, bc))
                 else:
+                    self.after(0, self._log, f"[lookup] not found on Ballchasing", "red")
                     # Not on Ballchasing — show upload prompt in detail view
                     if self._current_card and self._current_card["filename"] == c["filename"]:
                         self.after(0, lambda: self._render_detail(ci, c, None, show_upload_btn=True))
@@ -2456,7 +2459,7 @@ class App(ctk.CTk):
                     if len(stem) >= 16:
                         rl_id = stem
                 if rl_id:
-                    bc_id = lookup_bc_id(rl_id, api_key)
+                    bc_id = lookup_bc_id(rl_id, api_key, _log=lambda m, t=None: self.after(0, self._log, m, t))
                     if bc_id:
                         save_upload_id(card["filename"], bc_id)
                         self.after(0, lambda b=bc_id: self._btn_bc.configure(
