@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.179"
+VERSION          = "1.4.180"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -2615,6 +2615,7 @@ class App(ctk.CTk):
             def on_bc_id(bid):
                 bc_id_holder.append(bid)
                 save_upload_id(card["filename"], bid)
+                self.after(0, self._set_card_bc_id, card["filename"], bid)
                 self.after(0, lambda b=bid: self._btn_bc.configure(
                     state="normal", text="Ballchasing"))
 
@@ -3027,6 +3028,7 @@ class App(ctk.CTk):
                 self.after(0, lambda l=lbl: self._btn_upload.configure(state="normal", text=l))
             def on_bc_id(bc_id, fn=card["filename"]):
                 save_upload_id(fn, bc_id)
+                self.after(0, self._set_card_bc_id, fn, bc_id)
                 self.after(0, self._refresh_bc_btn, bc_id)
                 api_key = self.config_data.get("api_key", "")
                 bc = fetch_bc_stats(bc_id, api_key)
