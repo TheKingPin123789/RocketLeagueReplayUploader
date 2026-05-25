@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.170"
+VERSION          = "1.4.171"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -235,7 +235,7 @@ def save_upload_id(filename: str, bc_id: str) -> None:
         _atomic_write_json(UPLOAD_IDS_FILE, ids)
 
 
-def build_upload_id_index(api_key: str, log_fn=None) -> int:
+def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> int:
     """Fetch the user's replay list from Ballchasing and populate upload_ids.json
     with any entries that match local replay files.  Returns number of new IDs saved.
     Does NOT upload any files — read-only API calls only."""
@@ -243,10 +243,9 @@ def build_upload_id_index(api_key: str, log_fn=None) -> int:
         return 0
     try:
         local_ids = load_upload_ids()
-        # Build a set of rl_ids already known so we can skip them
         known_bc_ids = set(local_ids.values())
 
-        # Load all local rl_id → filename mappings from cache
+        # Build rl_id → filename from cache files
         rl_to_file: dict[str, str] = {}
         for cf in CACHE_DIR.glob("*.json"):
             if cf.name.startswith("bc_"):
@@ -259,8 +258,15 @@ def build_upload_id_index(api_key: str, log_fn=None) -> int:
             except Exception:
                 pass
 
-        if not rl_to_file:
-            return 0
+        # Also map directly from replay filenames — RL names files after their ID
+        if demos_folder:
+            for rp in Path(demos_folder).glob("*.replay"):
+                norm = _norm_rl_id(rp.stem)
+                if norm not in rl_to_file:
+                    rl_to_file[norm] = rp.name
+
+        if log_fn:
+            log_fn(f"[index] Scanning Ballchasing for {len(rl_to_file)} local replay(s)…")
 
         url = "https://ballchasing.com/api/replays"
         params = {"uploader": "me", "count": 200,
@@ -272,20 +278,21 @@ def build_upload_id_index(api_key: str, log_fn=None) -> int:
             try:
                 r = requests.get(url, headers={"Authorization": api_key},
                                  params=params if page == 0 else None, timeout=20)
-                params = None   # only on first request
+                params = None
                 page += 1
                 if r.status_code != 200:
+                    if log_fn: log_fn(f"[index] API error {r.status_code}", "red")
                     break
                 data = r.json()
-            except Exception:
+            except Exception as e:
+                if log_fn: log_fn(f"[index] error: {e}", "red")
                 break
 
             for replay in data.get("list", []):
                 bc_id = replay.get("id", "")
                 if not bc_id or bc_id in known_bc_ids:
                     continue
-                raw_rl = replay.get("rocket_league_id") or ""
-                norm   = _norm_rl_id(raw_rl)
+                norm = _norm_rl_id(replay.get("rocket_league_id") or "")
                 filename = rl_to_file.get(norm, "")
                 if filename and filename not in local_ids:
                     save_upload_id(filename, bc_id)
@@ -295,10 +302,11 @@ def build_upload_id_index(api_key: str, log_fn=None) -> int:
 
             url = data.get("next", "")
 
-        if log_fn and saved:
-            log_fn(f"[index] Matched {saved} replay(s) to Ballchasing IDs.")
+        if log_fn:
+            log_fn(f"[index] Done — matched {saved} new replay(s) to Ballchasing IDs.")
         return saved
-    except Exception:
+    except Exception as e:
+        if log_fn: log_fn(f"[index] failed: {e}", "red")
         return 0
 
 
@@ -6295,12 +6303,13 @@ class App(ctk.CTk):
         """Background: fetch user's BC replay list and populate upload_ids.json.
         Read-only — no file uploads."""
         api_key = self.config_data.get("api_key", "").strip()
+        folder  = self.config_data.get("demos_folder", "").strip()
         if not api_key:
             return
         def _run():
             build_upload_id_index(
-                api_key,
-                log_fn=lambda m: self.after(0, self._log, m))
+                api_key, demos_folder=folder,
+                log_fn=lambda m, t=None: self.after(0, self._log, m, t))
         threading.Thread(target=_run, daemon=True).start()
 
     def _check_first_run(self):
