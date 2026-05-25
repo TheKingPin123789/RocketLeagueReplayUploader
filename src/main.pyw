@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.169"
+VERSION          = "1.4.170"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -233,6 +233,73 @@ def save_upload_id(filename: str, bc_id: str) -> None:
         ids = load_upload_ids()
         ids[filename] = bc_id
         _atomic_write_json(UPLOAD_IDS_FILE, ids)
+
+
+def build_upload_id_index(api_key: str, log_fn=None) -> int:
+    """Fetch the user's replay list from Ballchasing and populate upload_ids.json
+    with any entries that match local replay files.  Returns number of new IDs saved.
+    Does NOT upload any files — read-only API calls only."""
+    if not api_key:
+        return 0
+    try:
+        local_ids = load_upload_ids()
+        # Build a set of rl_ids already known so we can skip them
+        known_bc_ids = set(local_ids.values())
+
+        # Load all local rl_id → filename mappings from cache
+        rl_to_file: dict[str, str] = {}
+        for cf in CACHE_DIR.glob("*.json"):
+            if cf.name.startswith("bc_"):
+                continue
+            try:
+                data = json.loads(cf.read_text(encoding="utf-8"))
+                rl_id = (data.get("rl_id") or "").strip()
+                if rl_id:
+                    rl_to_file[_norm_rl_id(rl_id)] = cf.stem + ".replay"
+            except Exception:
+                pass
+
+        if not rl_to_file:
+            return 0
+
+        url = "https://ballchasing.com/api/replays"
+        params = {"uploader": "me", "count": 200,
+                  "sort-by": "replay-date", "sort-dir": "desc"}
+        saved = 0
+        page = 0
+
+        while url:
+            try:
+                r = requests.get(url, headers={"Authorization": api_key},
+                                 params=params if page == 0 else None, timeout=20)
+                params = None   # only on first request
+                page += 1
+                if r.status_code != 200:
+                    break
+                data = r.json()
+            except Exception:
+                break
+
+            for replay in data.get("list", []):
+                bc_id = replay.get("id", "")
+                if not bc_id or bc_id in known_bc_ids:
+                    continue
+                raw_rl = replay.get("rocket_league_id") or ""
+                norm   = _norm_rl_id(raw_rl)
+                filename = rl_to_file.get(norm, "")
+                if filename and filename not in local_ids:
+                    save_upload_id(filename, bc_id)
+                    local_ids[filename] = bc_id
+                    known_bc_ids.add(bc_id)
+                    saved += 1
+
+            url = data.get("next", "")
+
+        if log_fn and saved:
+            log_fn(f"[index] Matched {saved} replay(s) to Ballchasing IDs.")
+        return saved
+    except Exception:
+        return 0
 
 
 def fetch_bc_stats(bc_id: str, api_key: str) -> dict | None:
@@ -1322,6 +1389,7 @@ class App(ctk.CTk):
         self.after(1500, self._scan_mirror_folder)
         self.after(2000, lambda: self._dedup(silent=True))
         self.after(3000, self._check_first_run)
+        self.after(5000, self._bg_build_index)
         if self.config_data.get("launch_with_rl", False):
             self._rl_poll_thread_running = True
             threading.Thread(target=self._rl_poll_loop, daemon=True).start()
@@ -2373,36 +2441,6 @@ class App(ctk.CTk):
                                                               show_upload_btn=(bc is None)))
             threading.Thread(target=_fetch, daemon=True).start()
 
-        elif not bc_id and self.config_data.get("api_key", "").strip():
-            # Replay was previously uploaded but bc_id is missing (e.g. fresh install).
-            # Silently attempt upload — will get 409 + bc_id from Ballchasing, then
-            # load stats automatically without the user having to click anything.
-            def _silent_get_bc_id(c=card, ci=cached):
-                api_key = self.config_data.get("api_key", "").strip()
-                bc_id_holder = []
-
-                def on_bc_id(bid):
-                    bc_id_holder.append(bid)
-                    save_upload_id(c["filename"], bid)
-                    self.after(0, lambda b=bid: self._btn_bc.configure(
-                        state="normal", text="Ballchasing"))
-
-                upload(c["path"], self.config_data, self.uploaded,
-                       lambda *_: None, force=True, on_bc_id=on_bc_id)
-
-                if bc_id_holder:
-                    bid = bc_id_holder[0]
-                    bc = None
-                    for attempt in range(6):
-                        bc = fetch_bc_stats(bid, api_key)
-                        if bc:
-                            break
-                        if attempt < 5:
-                            time.sleep(5)
-                    if self._current_card and self._current_card["filename"] == c["filename"]:
-                        self.after(0, lambda: self._render_detail(ci, c, bc,
-                                                                  show_upload_btn=(bc is None)))
-            threading.Thread(target=_silent_get_bc_id, daemon=True).start()
 
         if not cached:
             # No header cache — parse first, then re-enter the flow above
@@ -6252,6 +6290,18 @@ class App(ctk.CTk):
                 return
 
     # ── first-run setup guide ─────────────────────────────────────────────────
+
+    def _bg_build_index(self):
+        """Background: fetch user's BC replay list and populate upload_ids.json.
+        Read-only — no file uploads."""
+        api_key = self.config_data.get("api_key", "").strip()
+        if not api_key:
+            return
+        def _run():
+            build_upload_id_index(
+                api_key,
+                log_fn=lambda m: self.after(0, self._log, m))
+        threading.Thread(target=_run, daemon=True).start()
 
     def _check_first_run(self):
         api_key = self.config_data.get("api_key", "").strip()
