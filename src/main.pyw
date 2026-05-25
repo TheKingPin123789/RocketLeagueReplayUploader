@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.161"
+VERSION          = "1.4.162"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -276,6 +276,10 @@ def load_bc_stats(bc_id: str) -> dict | None:
         return None
 
 
+def _norm_rl_id(s: str) -> str:
+    """Normalise a Rocket League ID: uppercase, strip dashes and braces."""
+    return s.upper().replace("-", "").replace("{", "").replace("}", "")
+
 def lookup_bc_id(rl_id: str, api_key: str) -> str:
     """Find a replay's Ballchasing ID by its Rocket League internal ID.
     Tries uploader=me first, then falls back to any uploader."""
@@ -283,10 +287,12 @@ def lookup_bc_id(rl_id: str, api_key: str) -> str:
         return ""
     import urllib.request as _ur, urllib.parse as _up
 
-    def _search(extra: str) -> str:
+    norm = _norm_rl_id(rl_id)
+
+    def _search(query_id: str, extra: str) -> str:
         try:
             url = (f"https://ballchasing.com/api/replays"
-                   f"?rocket-league-id={_up.quote(rl_id)}&count=1{extra}")
+                   f"?rocket-league-id={_up.quote(query_id)}&count=1{extra}")
             req = _ur.Request(url, headers={"Authorization": api_key})
             with _ur.urlopen(req, timeout=15) as r:
                 data = json.loads(r.read())
@@ -294,15 +300,20 @@ def lookup_bc_id(rl_id: str, api_key: str) -> str:
             if not lst:
                 return ""
             hit = lst[0]
-            # Verify the returned replay actually matches the rl_id we searched for
-            returned_rl_id = (hit.get("rocket_league_id") or "").upper()
-            if returned_rl_id and returned_rl_id != rl_id.upper():
+            # Verify the returned replay matches — normalise both sides
+            returned = _norm_rl_id(hit.get("rocket_league_id") or "")
+            if returned and returned != norm:
                 return ""
             return hit["id"]
         except Exception:
             return ""
 
-    return _search("&uploader=me") or _search("")
+    # Try with the id as-is, then with the normalised (no dashes) form
+    for qid in dict.fromkeys([rl_id, norm]):          # dedup preserving order
+        result = _search(qid, "&uploader=me") or _search(qid, "")
+        if result:
+            return result
+    return ""
 
 
 MAP_NAMES: dict[str, str] = {
@@ -2341,8 +2352,11 @@ class App(ctk.CTk):
                         self.after(0, lambda i=info: self._update_card_info(c, i))
                         ci = info
                     rl_id = (ci or {}).get("rl_id", "")
+                # Last resort: the filename IS the Rocket League ID
                 if not rl_id:
-                    return
+                    stem = Path(c["path"]).stem
+                    if len(stem) >= 16:   # looks like a GUID
+                        rl_id = stem
                 bid = lookup_bc_id(rl_id, api_key)
                 if bid:
                     save_upload_id(c["filename"], bid)
@@ -2437,6 +2451,10 @@ class App(ctk.CTk):
                 # 409 without ID in body (or upload failed) — look up by rl_id
                 cached_info = load_cached(card["filename"])
                 rl_id = (cached_info or {}).get("rl_id", "")
+                if not rl_id:
+                    stem = Path(card["path"]).stem
+                    if len(stem) >= 16:
+                        rl_id = stem
                 if rl_id:
                     bc_id = lookup_bc_id(rl_id, api_key)
                     if bc_id:
