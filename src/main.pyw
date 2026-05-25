@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.177"
+VERSION          = "1.4.178"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -254,7 +254,8 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                 data = json.loads(cf.read_text(encoding="utf-8"))
                 rl_id = (data.get("rl_id") or "").strip()
                 if rl_id:
-                    rl_to_file[_norm_rl_id(rl_id)] = cf.stem + ".replay"
+                    # cf.stem for "Name.replay.json" is already "Name.replay"
+                    rl_to_file[_norm_rl_id(rl_id)] = cf.stem
             except Exception:
                 pass
 
@@ -5761,9 +5762,11 @@ class App(ctk.CTk):
         def worker():
             replay_names = {p.name for p in Path(folder).glob("*.replay") if p.is_file()}
 
-            # orphaned cache files
+            # orphaned cache files (skip bc_*.json — those are Ballchasing stat caches)
             if CACHE_DIR.exists():
                 for cf in CACHE_DIR.glob("*.json"):
+                    if cf.name.startswith("bc_"):
+                        continue
                     if cf.stem not in replay_names:
                         try: cf.unlink()
                         except OSError: pass
@@ -5906,6 +5909,8 @@ class App(ctk.CTk):
             deleted_cache = 0
             if CACHE_DIR.exists():
                 for cf in CACHE_DIR.glob("*.json"):
+                    if cf.name.startswith("bc_"):
+                        continue  # bc_*.json are Ballchasing stat caches, not replay caches
                     if cf.stem not in remaining:  # cf.stem is already "name.replay"
                         try:
                             cf.unlink()
