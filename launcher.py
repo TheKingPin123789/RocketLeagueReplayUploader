@@ -167,8 +167,6 @@ def launch():
     _ensure_rattletrap()
     _ensure_logo()
     _ensure_app_exe()
-    if load_config().get("desktop_shortcut", False):
-        _create_shortcut()
     # If running as plain Python (first-time setup), hand off to the exe so the
     # window lives inside BallchasingUploader.exe — correct icon on taskbar/pin.
     if APP_EXE_FILE.exists() and not getattr(sys, 'frozen', False):

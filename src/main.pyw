@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.181"
+VERSION          = "1.4.182"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1486,6 +1486,7 @@ class App(ctk.CTk):
         self.after(2000, lambda: self._dedup(silent=True))
         self.after(3000, self._check_first_run)
         self.after(1500, self._bg_build_index)
+        self.after(1000, self._sync_desktop_shortcut)
         if self.config_data.get("launch_with_rl", False):
             self._rl_poll_thread_running = True
             threading.Thread(target=self._rl_poll_loop, daemon=True).start()
@@ -5413,6 +5414,38 @@ class App(ctk.CTk):
                         pass
         except Exception as e:
             self._log(f"[startup] Could not update registry: {e}", "red")
+
+    def _sync_desktop_shortcut(self):
+        """Create or remove the desktop shortcut based on the user's setting.
+        Called on startup so the shortcut always matches the config, even if
+        the frozen launcher created it unconditionally on a previous version."""
+        want    = self.config_data.get("desktop_shortcut", False)
+        desktop = Path.home() / "Desktop" / "Ballchasing Uploader.lnk"
+        exe     = BASE_DIR.parent / "BallchasingUploader.exe"
+        if not want:
+            if desktop.exists():
+                try:
+                    desktop.unlink()
+                except Exception:
+                    pass
+        else:
+            if not desktop.exists() and exe.exists():
+                try:
+                    import subprocess
+                    ps = (
+                        f"$ws=New-Object -ComObject WScript.Shell; "
+                        f"$s=$ws.CreateShortcut('{desktop}'); "
+                        f"$s.TargetPath='{exe}'; "
+                        f"$s.WorkingDirectory='{BASE_DIR.parent}'; "
+                        f"$s.Description='Ballchasing Auto Uploader'; "
+                        f"$s.Save()"
+                    )
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
+                        capture_output=True, timeout=10
+                    )
+                except Exception:
+                    pass
 
     def _set_launch_with_rl(self, enabled: bool):
         if enabled and not getattr(self, "_rl_poll_thread_running", False):
