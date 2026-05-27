@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.182"
+VERSION          = "1.4.183"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1010,19 +1010,26 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
             rname = Path(filename).stem
     tags     = "  ·  ".join(t for t in [type_tag, mode_str] if t)
 
+    # Upload button is shown on cards that have no Ballchasing ID and are not parsing/failed
+    _show_upl = not entry.get("bc_id") and not entry.get("parsing") and not entry.get("failed")
+    _upl_w    = (58 if not _COMPACT else 20) if _show_upl else 0
+
     if TAG_H == 0:
-        # normal mode: truncate name to leave room for tags; right boundary = sx_r
-        tag_px   = (_measure_font("Segoe UI", d["tag_font"]).measure(tags) + 14) if tags else 0
-        name_max = sx_r - cx - tag_px - 8
+        # normal mode: hide tags when upload button is visible (button takes that space)
+        if _show_upl:
+            name_max = sx_r - cx - _upl_w - 12
+        else:
+            tag_px   = (_measure_font("Segoe UI", d["tag_font"]).measure(tags) + 14) if tags else 0
+            name_max = sx_r - cx - tag_px - 8
     else:
-        # compact mode: tags on own row, name takes full width
-        name_max = x1 - cx - 6
+        # compact mode: tags on own row, name takes full width minus button
+        name_max = x1 - cx - 6 - (_upl_w + 4 if _show_upl else 0)
     rname = _fit_text(rname, "Segoe UI", d["name_font"], "bold", name_max)
 
     canvas.create_text(cx, ny, text=rname, anchor="w",
                        fill=cc["name"], font=("Segoe UI", d["name_font"], "bold"))
 
-    if TAG_H == 0:
+    if TAG_H == 0 and not _show_upl:
         # normal mode: tags on right side of name row, just inside right score column
         if tags:
             canvas.create_text(sx_r-6, ny, text=tags, anchor="e",
@@ -1035,6 +1042,24 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
         return
     if not info:
         return
+
+    # ── quick-upload button ────────────────────────────────────────────────────
+    if _show_upl:
+        _ubh  = max(12, NAME_H - 8)
+        _ubx1 = sx_r - 4
+        _ubx0 = _ubx1 - _upl_w
+        _uby0 = y + (NAME_H - _ubh) // 2
+        _uby1 = _uby0 + _ubh
+        _uploading = entry.get("_uploading", False)
+        _ubcol = _c(C_DIM) if _uploading else cc["border_no_bc"]
+        _ubtxt = "⟳" if _uploading else ("⬆" if _COMPACT else "⬆ Upload")
+        canvas.create_rectangle(_ubx0, _uby0, _ubx1, _uby1, fill=_ubcol, outline="")
+        canvas.create_text((_ubx0 + _ubx1) // 2, (_uby0 + _uby1) // 2,
+                           text=_ubtxt, anchor="center", fill="white",
+                           font=("Segoe UI", 8 if _COMPACT else 9, "bold"))
+        entry["_upload_btn"] = (_ubx0, _uby0, _ubx1, _uby1)
+    else:
+        entry.pop("_upload_btn", None)
 
     if TAG_H > 0:
         # compact mode: tag row below name row
@@ -2456,10 +2481,42 @@ class App(ctk.CTk):
                     x1    = x0 + col_w
                     if not (x0 <= event.x <= x1):
                         continue
+                # Check quick-upload button before opening detail
+                btn = card.get("_upload_btn")
+                if btn and not card.get("_uploading"):
+                    bx0, by0, bx1, by1 = btn
+                    if bx0 <= event.x <= bx1 and by0 <= cy <= by1:
+                        self._quick_upload_from_card(card)
+                        return
                 if not card.get("parsing"):
                     self._detail_back = "replays"
                     self._show_detail(card)
                 return
+
+    def _quick_upload_from_card(self, card: dict):
+        """Upload a replay directly from the card without opening the detail page."""
+        if card.get("_uploading") or card.get("bc_id"):
+            return
+        if not self.config_data.get("api_key", "").strip():
+            self._log("[upload] No API key configured.", "red")
+            return
+        card["_uploading"] = True
+        self._schedule_redraw()
+
+        def worker():
+            def on_status(name, status):
+                self.after(0, self._log, f"[upload] {name}: {status}")
+                if status == "failed":
+                    card["_uploading"] = False
+                    self.after(0, self._schedule_redraw)
+            def on_bc_id(bc_id, fn=card["filename"]):
+                save_upload_id(fn, bc_id)
+                card["_uploading"] = False
+                self.after(0, self._set_card_bc_id, fn, bc_id)
+            upload(card["path"], self.config_data, self.uploaded, on_status,
+                   force=True, on_bc_id=on_bc_id)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ── detail page ───────────────────────────────────────────────────────────
 
