@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.180"
+VERSION          = "1.4.181"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -4035,7 +4035,18 @@ class App(ctk.CTk):
                       button_hover_color=("#bebebe", "#f0f0f0")
                       ).grid(row=8, column=1, sticky="w", padx=8, pady=8)
 
-        _lbl(9, "Launch with Rocket League")
+        _lbl(9, "Desktop Shortcut")
+        self.desktop_shortcut_var = ctk.BooleanVar(
+            value=self.config_data.get("desktop_shortcut", False))
+        ctk.CTkSwitch(pg, text="Create a desktop shortcut for quick access",
+                      variable=self.desktop_shortcut_var,
+                      onvalue=True, offvalue=False,
+                      progress_color=("#3B8ED0", "#1F6AA5"),
+                      button_color=("#d0d0d0", "white"),
+                      button_hover_color=("#bebebe", "#f0f0f0")
+                      ).grid(row=9, column=1, sticky="w", padx=8, pady=8)
+
+        _lbl(10, "Launch with Rocket League")
         self.launch_with_rl_var = ctk.BooleanVar(
             value=self.config_data.get("launch_with_rl", False))
         ctk.CTkSwitch(pg, text="Start watching replays when Rocket League launches",
@@ -4044,9 +4055,9 @@ class App(ctk.CTk):
                       progress_color=("#3B8ED0", "#1F6AA5"),
                       button_color=("#d0d0d0", "white"),
                       button_hover_color=("#bebebe", "#f0f0f0")
-                      ).grid(row=9, column=1, sticky="w", padx=8, pady=8)
+                      ).grid(row=10, column=1, sticky="w", padx=8, pady=8)
 
-        _lbl(10, "Auto-fetch Stats")
+        _lbl(11, "Auto-fetch Stats")
         self.auto_fetch_bc_var = ctk.BooleanVar(
             value=self.config_data.get("auto_fetch_bc", True))
         ctk.CTkSwitch(pg,
@@ -4056,11 +4067,11 @@ class App(ctk.CTk):
                       progress_color=("#3B8ED0", "#1F6AA5"),
                       button_color=("#d0d0d0", "white"),
                       button_hover_color=("#bebebe", "#f0f0f0")
-                      ).grid(row=10, column=1, sticky="w", padx=8, pady=8)
+                      ).grid(row=11, column=1, sticky="w", padx=8, pady=8)
 
-        _lbl(11, "Replay Folder Limit")
+        _lbl(12, "Replay Folder Limit")
         limit_frame = ctk.CTkFrame(pg, fg_color="transparent")
-        limit_frame.grid(row=11, column=1, sticky="w", padx=8, pady=8)
+        limit_frame.grid(row=12, column=1, sticky="w", padx=8, pady=8)
         self.replay_limit_var = tk.StringVar(
             value=str(self.config_data.get("replay_limit", 0)))
         limit_entry = ctk.CTkEntry(limit_frame, textvariable=self.replay_limit_var,
@@ -4072,33 +4083,33 @@ class App(ctk.CTk):
                      ).pack(side="left")
 
         # ── Appearance ────────────────────────────────────────────────────────
-        _section(12, "Appearance")
+        _section(13, "Appearance")
 
-        _lbl(13, "Theme")
+        _lbl(14, "Theme")
         self.theme_var = ctk.StringVar(
             value=self.config_data.get("theme", "dark"))
         ctk.CTkSegmentedButton(pg, values=["dark", "light", "system"],
                                variable=self.theme_var,
                                command=self._on_theme_change,
                                width=200
-                               ).grid(row=13, column=1, sticky="w",
+                               ).grid(row=14, column=1, sticky="w",
                                       padx=8, pady=8)
 
-        _lbl(14, "Colours")
+        _lbl(15, "Colours")
         ctk.CTkButton(pg, text="Customize Colors",
                       command=self._open_color_editor
-                      ).grid(row=14, column=1, sticky="w", padx=8, pady=8)
+                      ).grid(row=15, column=1, sticky="w", padx=8, pady=8)
 
         # ── Actions ───────────────────────────────────────────────────────────
-        _section(15, "Actions")
+        _section(16, "Actions")
 
         ctk.CTkButton(pg, text="Download Replays from Ballchasing",
                       command=self._confirm_download
-                      ).grid(row=16, column=0, columnspan=3,
+                      ).grid(row=17, column=0, columnspan=3,
                              padx=20, pady=(8, 2), sticky="w")
         ctk.CTkLabel(pg, text="Fetch replays from your Ballchasing account into the local cache.",
                      font=ctk.CTkFont(size=11), text_color=C_DIM, anchor="w"
-                     ).grid(row=17, column=0, columnspan=3,
+                     ).grid(row=18, column=0, columnspan=3,
                             padx=20, pady=(0, 10), sticky="w")
 
 
@@ -5324,6 +5335,7 @@ class App(ctk.CTk):
         self.config_data["sync_folder"]      = self.sync_entry.get().strip()
         self.config_data["visibility"]       = self.vis_var.get()
         self.config_data["upload_on_detect"] = self.upload_on_detect_var.get()
+        self.config_data["desktop_shortcut"] = self.desktop_shortcut_var.get()
         self.config_data["launch_with_rl"]   = self.launch_with_rl_var.get()
         self.config_data["auto_fetch_bc"]    = self.auto_fetch_bc_var.get()
         self.config_data["theme"]            = self.theme_var.get()
