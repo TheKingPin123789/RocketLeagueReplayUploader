@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.190"
+VERSION          = "1.4.191"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6861,7 +6861,7 @@ class App(ctk.CTk):
         self._log(f"[update] v{new_version} available — click the update button to restart.")
         self._update_btn.configure(
             text=f"⬆  Update to v{new_version} — Restart & Update")
-        self._update_btn.pack(fill="x", padx=20, pady=(0, 6))
+        self._update_btn.pack(fill="x", padx=20, pady=(0, 6), after=self.toggle_btn)
 
     def _apply_exe_update(self):
         """Write a batch script that replaces the exe after this process exits, then quit."""
