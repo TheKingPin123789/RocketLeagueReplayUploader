@@ -139,12 +139,22 @@ def _ensure_app_exe():
         pass
 
 def _create_shortcut():
-    """Create/update the desktop shortcut targeting BallchasingUploader.exe,
-    which has the icon embedded — works correctly on taskbar and desktop."""
+    """Create desktop shortcut only if the user opted in AND it doesn't already exist."""
     try:
         import subprocess
         if not APP_EXE_FILE.exists():
             return
+        # Respect the user's setting — default False so new installs don't get one
+        if not load_config().get("desktop_shortcut", False):
+            return
+        import ctypes, os as _os
+        desktop = Path(_os.path.join(
+            ctypes.windll.shell32.SHGetFolderPathW(0, 0x0000, 0, 0) or
+            str(Path.home() / "Desktop"),
+        ))
+        lnk = Path.home() / "Desktop" / "Ballchasing Uploader.lnk"
+        if lnk.exists():
+            return          # already there — skip PowerShell entirely
         ps = (
             f"$ws=New-Object -ComObject WScript.Shell; "
             f"$s=$ws.CreateShortcut([Environment]::GetFolderPath('Desktop')+'\\Ballchasing Uploader.lnk'); "
@@ -167,6 +177,7 @@ def launch():
     _ensure_rattletrap()
     _ensure_logo()
     _ensure_app_exe()
+    _create_shortcut()
     # If running as plain Python (first-time setup), hand off to the exe so the
     # window lives inside BallchasingUploader.exe — correct icon on taskbar/pin.
     if APP_EXE_FILE.exists() and not getattr(sys, 'frozen', False):
