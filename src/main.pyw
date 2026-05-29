@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.188"
+VERSION          = "1.4.189"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6829,21 +6829,19 @@ class App(ctk.CTk):
         Can't replace the running exe directly — writes a batch updater instead."""
         def worker():
             try:
-                server_ver = self.config_data.get("_server_launcher_version", "")
-                local_ver  = self.config_data.get("_launcher_version", "")
-                if not server_ver or server_ver == local_ver:
-                    return  # exe already current
                 exe = BASE_DIR.parent / "BallchasingUploader.exe"
                 if not exe.exists():
                     return  # not running as exe
-                # Get the current app version to show the user
-                app_ver = VERSION
-                try:
-                    rv = requests.get(f"{APP_SERVER}/version", timeout=8)
-                    if rv.status_code == 200:
-                        app_ver = rv.json().get("version", VERSION)
-                except Exception:
-                    pass
+                # Fetch both app version and launcher version in one call
+                rv = requests.get(f"{APP_SERVER}/version", timeout=8)
+                if rv.status_code != 200:
+                    return
+                data           = rv.json()
+                server_launcher = data.get("launcher_version", "")
+                app_ver         = data.get("version", VERSION)
+                local_launcher  = self.config_data.get("_launcher_version", "")
+                if not server_launcher or server_launcher == local_launcher:
+                    return  # exe already current
                 # Download the new exe
                 r = requests.get(f"{APP_SERVER}/app", timeout=60)
                 if r.status_code != 200:
