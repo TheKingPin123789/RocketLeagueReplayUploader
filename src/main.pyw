@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.189"
+VERSION          = "1.4.190"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1451,6 +1451,9 @@ class App(ctk.CTk):
         self.uploaded    = load_uploaded()
         self.observer: Observer | None = None
         self._current_page = "main"
+        # Snapshot the exe's launcher version before _check_launcher_update
+        # can update it in memory — used by _check_exe_update
+        self._exe_launcher_version = self.config_data.get("_launcher_version", "")
         # Sync desktop shortcut immediately (before window renders) so the old
         # frozen launcher's unconditional _create_shortcut() is undone before
         # the user sees the desktop.
@@ -6839,7 +6842,7 @@ class App(ctk.CTk):
                 data           = rv.json()
                 server_launcher = data.get("launcher_version", "")
                 app_ver         = data.get("version", VERSION)
-                local_launcher  = self.config_data.get("_launcher_version", "")
+                local_launcher  = self._exe_launcher_version
                 if not server_launcher or server_launcher == local_launcher:
                     return  # exe already current
                 # Download the new exe
