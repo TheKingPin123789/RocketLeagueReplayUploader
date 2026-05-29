@@ -28,6 +28,12 @@ import requests
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+# ── single-instance guard ──────────────────────────────────────────────────────
+import ctypes as _ctypes
+_mutex = _ctypes.windll.kernel32.CreateMutexW(None, False, "BallchasingUploaderSingleInstance")
+if _ctypes.windll.kernel32.GetLastError() == 183:   # ERROR_ALREADY_EXISTS
+    sys.exit(0)
+
 
 
 BASE_DIR      = Path(__file__).parent
@@ -36,7 +42,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.193"
+VERSION          = "1.4.194"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
