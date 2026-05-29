@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.186"
+VERSION          = "1.4.187"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1564,6 +1564,14 @@ class App(ctk.CTk):
                                         font=ctk.CTkFont(size=15, weight="bold"),
                                         command=self._toggle_watching)
         self.toggle_btn.pack(fill="x", padx=20, pady=(14, 8))
+
+        # Update button — hidden until a new exe is available
+        self._update_btn = ctk.CTkButton(
+            self.main_page, text="⬆  App update available — Restart & Update",
+            height=34, font=ctk.CTkFont(size=13),
+            fg_color="#2a6099", hover_color="#1e4f7a",
+            command=self._apply_exe_update)
+        # NOT packed here — shown by _prompt_exe_update when needed
 
         quota_row = ctk.CTkFrame(self.main_page, fg_color="transparent")
         quota_row.pack(fill="x", padx=20, pady=(0, 6))
@@ -6388,36 +6396,21 @@ class App(ctk.CTk):
 
     # ── toast notification ────────────────────────────────────────────────────
 
-    def _show_toast(self, message: str, duration_ms: int = 5000,
-                    action_label: str = "", action_cmd=None):
-        """Show a silent, auto-dismissing notification at the bottom-right of the screen.
-        If action_label + action_cmd are given, a button is shown and the toast persists
-        until the button is clicked or dismissed."""
+    def _show_toast(self, message: str, duration_ms: int = 5000):
+        """Show a silent, auto-dismissing notification at the bottom-right of the screen."""
         try:
             toast = tk.Toplevel(self)
             toast.overrideredirect(True)
             toast.attributes("-topmost", True)
             toast.attributes("-alpha", 0.92)
 
-            bg  = "#1e1e1e" if self.config_data.get("theme", "dark") == "dark" else "#f0f0f0"
-            fg  = "#ffffff"  if self.config_data.get("theme", "dark") == "dark" else "#111111"
-            abg = "#3B8ED0"
+            bg = "#1e1e1e" if self.config_data.get("theme", "dark") == "dark" else "#f0f0f0"
+            fg = "#ffffff"  if self.config_data.get("theme", "dark") == "dark" else "#111111"
 
             frame = tk.Frame(toast, bg=bg, padx=14, pady=10)
             frame.pack(fill="both", expand=True)
             tk.Label(frame, text=message, bg=bg, fg=fg,
                      font=("Segoe UI", 11), wraplength=280, justify="left").pack()
-
-            if action_label and action_cmd:
-                def _do_action():
-                    try: toast.destroy()
-                    except Exception: pass
-                    action_cmd()
-                tk.Button(frame, text=action_label, bg=abg, fg="white",
-                          font=("Segoe UI", 10, "bold"), relief="flat",
-                          cursor="hand2", padx=10, pady=4,
-                          command=_do_action).pack(pady=(8, 0))
-                duration_ms = 30_000   # keep visible longer when action required
 
             toast.update()
             sw = self.winfo_screenwidth()
@@ -6855,13 +6848,11 @@ class App(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _prompt_exe_update(self, new_version: str):
-        """Show a toast with a restart button to apply the downloaded exe update."""
-        self._log(f"[update] App update v{new_version} ready — restart to apply.")
-        self._show_toast(
-            f"App update v{new_version} ready",
-            action_label="Restart & Update",
-            action_cmd=self._apply_exe_update,
-        )
+        """Show the persistent update button below Start Watching."""
+        self._log(f"[update] App update v{new_version} ready — click the update button to restart.")
+        self._update_btn.configure(
+            text=f"⬆  App update v{new_version} available — Restart & Update")
+        self._update_btn.pack(fill="x", padx=20, pady=(0, 6))
 
     def _apply_exe_update(self):
         """Write a batch script that replaces the exe after this process exits, then quit."""
