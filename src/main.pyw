@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.201"
+VERSION          = "1.4.202"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1536,7 +1536,7 @@ class App(ctk.CTk):
         self.after(500, self._send_ping)
         self.after(4000, self._check_launcher_update)
         self.after(5000, self._check_self_update)
-        self.after(6000, self._check_exe_update)
+        self.after(2000, self._check_exe_update)
         self.after(1000, self._bg_cache_replays)
         self.after(800,  self._load_replays_for_main)
         self.after(1500, self._scan_mirror_folder)
