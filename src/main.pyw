@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.198"
+VERSION          = "1.4.199"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6891,15 +6891,17 @@ class App(ctk.CTk):
         new_exe = BASE_DIR.parent / "BallchasingUploader.new.exe"
         bat     = BASE_DIR.parent / "_update.bat"
         app_dir = str(BASE_DIR.parent)
+        exe_name = exe.name
         bat.write_text(
             "@echo off\r\n"
             "ping -n 3 127.0.0.1 > nul\r\n"
             f'move /y "{new_exe}" "{exe}"\r\n'
-            # Clean MEI folders both in %TEMP% and next to the exe (runtime-tmpdir=.)
             "for /d %%i in (\"%LOCALAPPDATA%\\Temp\\_MEI*\") do rd /s /q \"%%i\" 2>nul\r\n"
             f'for /d %%i in ("{app_dir}\\_MEI*") do rd /s /q \"%%i\" 2>nul\r\n'
-            # /d sets the working directory so --runtime-tmpdir="." extracts next to the exe
-            f'start "" /d "{app_dir}" "{exe}"\r\n'
+            # pushd sets CWD explicitly so --runtime-tmpdir="." extracts next to the exe
+            f'pushd "{app_dir}"\r\n'
+            f'start "" "{exe_name}"\r\n'
+            "popd\r\n"
             'del "%~f0"\r\n',
             encoding="ascii"
         )
@@ -6907,7 +6909,7 @@ class App(ctk.CTk):
             ["cmd", "/c", str(bat)],
             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
             close_fds=True,
-            cwd=app_dir,   # inherit correct CWD to the batch process too
+            cwd=app_dir,
         )
         self.destroy()
 
