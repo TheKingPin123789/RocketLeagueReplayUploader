@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.185"
+VERSION          = "1.4.186"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1510,6 +1510,7 @@ class App(ctk.CTk):
         self.after(500, self._send_ping)
         self.after(4000, self._check_launcher_update)
         self.after(5000, self._check_self_update)
+        self.after(6000, self._check_exe_update)
         self.after(1000, self._bg_cache_replays)
         self.after(800,  self._load_replays_for_main)
         self.after(1500, self._scan_mirror_folder)
@@ -6387,30 +6388,44 @@ class App(ctk.CTk):
 
     # ── toast notification ────────────────────────────────────────────────────
 
-    def _show_toast(self, message: str, duration_ms: int = 5000):
-        """Show a silent, auto-dismissing notification at the bottom-right of the screen."""
+    def _show_toast(self, message: str, duration_ms: int = 5000,
+                    action_label: str = "", action_cmd=None):
+        """Show a silent, auto-dismissing notification at the bottom-right of the screen.
+        If action_label + action_cmd are given, a button is shown and the toast persists
+        until the button is clicked or dismissed."""
         try:
             toast = tk.Toplevel(self)
             toast.overrideredirect(True)
             toast.attributes("-topmost", True)
             toast.attributes("-alpha", 0.92)
 
-            bg = "#1e1e1e" if self.config_data.get("theme", "dark") == "dark" else "#f0f0f0"
-            fg = "#ffffff"  if self.config_data.get("theme", "dark") == "dark" else "#111111"
+            bg  = "#1e1e1e" if self.config_data.get("theme", "dark") == "dark" else "#f0f0f0"
+            fg  = "#ffffff"  if self.config_data.get("theme", "dark") == "dark" else "#111111"
+            abg = "#3B8ED0"
 
             frame = tk.Frame(toast, bg=bg, padx=14, pady=10)
             frame.pack(fill="both", expand=True)
             tk.Label(frame, text=message, bg=bg, fg=fg,
                      font=("Segoe UI", 11), wraplength=280, justify="left").pack()
 
-            toast.update()          # force full geometry pass so winfo_* are valid
+            if action_label and action_cmd:
+                def _do_action():
+                    try: toast.destroy()
+                    except Exception: pass
+                    action_cmd()
+                tk.Button(frame, text=action_label, bg=abg, fg="white",
+                          font=("Segoe UI", 10, "bold"), relief="flat",
+                          cursor="hand2", padx=10, pady=4,
+                          command=_do_action).pack(pady=(8, 0))
+                duration_ms = 30_000   # keep visible longer when action required
+
+            toast.update()
             sw = self.winfo_screenwidth()
             sh = self.winfo_screenheight()
             w  = toast.winfo_reqwidth()
             h  = toast.winfo_reqheight()
             toast.geometry(f"{w}x{h}+{sw - w - 24}+{sh - h - 60}")
 
-            # fade out then destroy
             def _fade(alpha=0.92):
                 try:
                     if alpha <= 0.0:
@@ -6815,6 +6830,58 @@ class App(ctk.CTk):
     def _apply_launcher_update(self, cfg: dict):
         self.config_data = cfg
         save_config(cfg)
+
+    def _check_exe_update(self):
+        """Download a new BallchasingUploader.exe if the server has a newer launcher version.
+        Can't replace the running exe directly — writes a batch updater instead."""
+        def worker():
+            try:
+                server_ver = self.config_data.get("_server_launcher_version", "")
+                local_ver  = self.config_data.get("_launcher_version", "")
+                if not server_ver or server_ver == local_ver:
+                    return  # exe already current
+                exe = BASE_DIR.parent / "BallchasingUploader.exe"
+                if not exe.exists():
+                    return  # not running as exe
+                # Download the new exe
+                r = requests.get(f"{APP_SERVER}/app", timeout=60)
+                if r.status_code != 200:
+                    return
+                new_exe = exe.with_name("BallchasingUploader.new.exe")
+                new_exe.write_bytes(r.content)
+                self.after(0, lambda v=server_ver: self._prompt_exe_update(v))
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _prompt_exe_update(self, new_version: str):
+        """Show a toast with a restart button to apply the downloaded exe update."""
+        self._log(f"[update] App update v{new_version} ready — restart to apply.")
+        self._show_toast(
+            f"App update v{new_version} ready",
+            action_label="Restart & Update",
+            action_cmd=self._apply_exe_update,
+        )
+
+    def _apply_exe_update(self):
+        """Write a batch script that replaces the exe after this process exits, then quit."""
+        exe     = BASE_DIR.parent / "BallchasingUploader.exe"
+        new_exe = BASE_DIR.parent / "BallchasingUploader.new.exe"
+        bat     = BASE_DIR.parent / "_update.bat"
+        bat.write_text(
+            "@echo off\r\n"
+            "ping -n 3 127.0.0.1 > nul\r\n"
+            f'move /y "{new_exe}" "{exe}"\r\n'
+            f'start "" "{exe}"\r\n'
+            'del "%~f0"\r\n',
+            encoding="ascii"
+        )
+        subprocess.Popen(
+            ["cmd", "/c", str(bat)],
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            close_fds=True,
+        )
+        self.destroy()
 
     def _restart(self):
         pythonw = Path(sys.executable).with_name("pythonw.exe")
