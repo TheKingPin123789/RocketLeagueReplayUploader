@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.183"
+VERSION          = "1.4.184"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1451,6 +1451,10 @@ class App(ctk.CTk):
         self.uploaded    = load_uploaded()
         self.observer: Observer | None = None
         self._current_page = "main"
+        # Sync desktop shortcut immediately (before window renders) so the old
+        # frozen launcher's unconditional _create_shortcut() is undone before
+        # the user sees the desktop.
+        self._sync_desktop_shortcut()
 
         global _COMPACT
         _COMPACT = bool(self.config_data.get("compact_mode", False))
@@ -1511,7 +1515,6 @@ class App(ctk.CTk):
         self.after(2000, lambda: self._dedup(silent=True))
         self.after(3000, self._check_first_run)
         self.after(1500, self._bg_build_index)
-        self.after(1000, self._sync_desktop_shortcut)
         if self.config_data.get("launch_with_rl", False):
             self._rl_poll_thread_running = True
             threading.Thread(target=self._rl_poll_loop, daemon=True).start()
