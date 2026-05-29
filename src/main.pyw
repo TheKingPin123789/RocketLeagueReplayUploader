@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.184"
+VERSION          = "1.4.185"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1509,6 +1509,7 @@ class App(ctk.CTk):
         self.after(300, self._fetch_quota)
         self.after(500, self._send_ping)
         self.after(4000, self._check_launcher_update)
+        self.after(5000, self._check_self_update)
         self.after(1000, self._bg_cache_replays)
         self.after(800,  self._load_replays_for_main)
         self.after(1500, self._scan_mirror_folder)
@@ -6732,6 +6733,50 @@ class App(ctk.CTk):
             except Exception:
                 pass
         threading.Thread(target=worker, daemon=True).start()
+
+    def _check_self_update(self):
+        """Check if the server has a newer main.pyw and auto-update + restart.
+        Backup update path — works even when the launcher's version check fails."""
+        def worker():
+            try:
+                r = requests.get(f"{APP_SERVER}/version", timeout=8)
+                if r.status_code != 200:
+                    return
+                server_ver = r.json().get("version", "")
+                if not server_ver or server_ver == VERSION:
+                    return          # already current
+                client_id = self.config_data.get("_client_id", "")
+                token     = self.config_data.get("_auth_token", "")
+                if not client_id or not token:
+                    return
+                r2 = requests.post(f"{APP_SERVER}/code",
+                                   json={"client_id": client_id, "token": token},
+                                   timeout=30)
+                if r2.status_code != 200:
+                    return
+                script = Path(__file__)
+                tmp    = script.with_suffix(".tmp")
+                tmp.write_bytes(r2.content)
+                tmp.replace(script)
+                cfg = {**self.config_data, "_local_version": server_ver}
+                self.after(0, lambda v=server_ver, c=cfg: self._apply_self_update(v, c))
+            except Exception:
+                pass
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_self_update(self, new_version: str, cfg: dict):
+        self.config_data = cfg
+        save_config(cfg)
+        self._log(f"[update] Downloaded v{new_version} — restarting in 2 s…")
+        self.after(2000, self._restart_for_update)
+
+    def _restart_for_update(self):
+        exe = BASE_DIR.parent / "BallchasingUploader.exe"
+        if exe.exists():
+            subprocess.Popen([str(exe)], cwd=str(BASE_DIR.parent))
+        else:
+            subprocess.Popen([sys.executable], cwd=str(BASE_DIR.parent))
+        self.destroy()
 
     def _check_launcher_update(self):
         """Silently download and replace launcher.py if the server has a newer version."""
