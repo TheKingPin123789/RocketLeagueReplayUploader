@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.200"
+VERSION          = "1.4.201"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6886,31 +6886,47 @@ class App(ctk.CTk):
         self._update_btn.pack(fill="x", padx=20, pady=(0, 6), after=self.toggle_btn)
 
     def _apply_exe_update(self):
-        """Write a batch script that replaces the exe after this process exits, then quit."""
+        """Replace the exe and restart.  Launch the new exe directly from Python
+        (avoids the DLL-load failure that occurs when cmd.exe's 'start' is used),
+        then use a tiny batch to rename it back to BallchasingUploader.exe once
+        both processes have settled."""
         exe     = BASE_DIR.parent / "BallchasingUploader.exe"
         new_exe = BASE_DIR.parent / "BallchasingUploader.new.exe"
-        bat     = BASE_DIR.parent / "_update.bat"
         app_dir = str(BASE_DIR.parent)
-        exe_name = exe.name
+
+        # Rename batch: just swaps the filenames after both processes are quiet
+        bat = BASE_DIR.parent / "_rename.bat"
         bat.write_text(
             "@echo off\r\n"
-            "ping -n 3 127.0.0.1 > nul\r\n"
+            "ping -n 4 127.0.0.1 > nul\r\n"           # wait ~3 s for old exe to exit
+            f'if exist "{exe}" del /f /q "{exe}"\r\n'
             f'move /y "{new_exe}" "{exe}"\r\n'
             "for /d %%i in (\"%LOCALAPPDATA%\\Temp\\_MEI*\") do rd /s /q \"%%i\" 2>nul\r\n"
             f'for /d %%i in ("{app_dir}\\_MEI*") do rd /s /q \"%%i\" 2>nul\r\n'
-            # pushd sets CWD explicitly so --runtime-tmpdir="." extracts next to the exe
-            f'pushd "{app_dir}"\r\n'
-            f'start "" "{exe_name}"\r\n'
-            "popd\r\n"
             'del "%~f0"\r\n',
             encoding="ascii"
         )
+
+        # Release the single-instance socket so the new exe can bind it
+        try:
+            _lock_sock.close()
+        except Exception:
+            pass
+
+        # Launch new exe directly from Python — this works; cmd 'start' does not
+        subprocess.Popen(
+            [str(new_exe)],
+            cwd=app_dir,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+
+        # Run the rename batch (no exe launch inside — just renames files)
         subprocess.Popen(
             ["cmd", "/c", str(bat)],
             creationflags=subprocess.CREATE_NO_WINDOW,
-            close_fds=True,
             cwd=app_dir,
         )
+
         self.destroy()
 
     def _restart(self):
