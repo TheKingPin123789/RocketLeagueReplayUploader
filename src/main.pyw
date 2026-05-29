@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.196"
+VERSION          = "1.4.197"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6890,11 +6890,14 @@ class App(ctk.CTk):
         exe     = BASE_DIR.parent / "BallchasingUploader.exe"
         new_exe = BASE_DIR.parent / "BallchasingUploader.new.exe"
         bat     = BASE_DIR.parent / "_update.bat"
+        app_dir = str(BASE_DIR.parent)
         bat.write_text(
             "@echo off\r\n"
             "ping -n 3 127.0.0.1 > nul\r\n"
             f'move /y "{new_exe}" "{exe}"\r\n'
+            # Clean MEI folders both in %TEMP% and next to the exe (runtime-tmpdir=.)
             "for /d %%i in (\"%LOCALAPPDATA%\\Temp\\_MEI*\") do rd /s /q \"%%i\" 2>nul\r\n"
+            f'for /d %%i in ("{app_dir}\\_MEI*") do rd /s /q \"%%i\" 2>nul\r\n'
             f'start "" "{exe}"\r\n'
             'del "%~f0"\r\n',
             encoding="ascii"
