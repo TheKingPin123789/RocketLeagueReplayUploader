@@ -23,6 +23,20 @@ _LIB_DIR = Path(__file__).parent / "lib"
 if _LIB_DIR.is_dir():
     sys.path.insert(0, str(_LIB_DIR))
 
+# In frozen PyInstaller exes, darkdetect's module-level ctypes argtypes setup
+# crashes libffi-8.dll (STATUS_STACK_BUFFER_OVERRUN).  Mock it out before
+# customtkinter has a chance to import it.  The app uses the config theme
+# setting anyway so auto-detection is not needed.
+if getattr(sys, 'frozen', False):
+    import types as _types
+    _dd = _types.ModuleType('darkdetect')
+    _dd.theme    = lambda: 'Dark'
+    _dd.isDark   = lambda: True
+    _dd.isLight  = lambda: False
+    _dd.listener = lambda cb: None
+    sys.modules['darkdetect'] = _dd
+    del _types, _dd
+
 import customtkinter as ctk
 import requests
 from watchdog.observers import Observer
@@ -45,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.195"
+VERSION          = "1.4.196"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
