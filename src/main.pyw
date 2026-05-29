@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.199"
+VERSION          = "1.4.200"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6907,7 +6907,7 @@ class App(ctk.CTk):
         )
         subprocess.Popen(
             ["cmd", "/c", str(bat)],
-            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            creationflags=subprocess.CREATE_NO_WINDOW,
             close_fds=True,
             cwd=app_dir,
         )
