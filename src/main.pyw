@@ -36,7 +36,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.187"
+VERSION          = "1.4.188"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6836,22 +6836,30 @@ class App(ctk.CTk):
                 exe = BASE_DIR.parent / "BallchasingUploader.exe"
                 if not exe.exists():
                     return  # not running as exe
+                # Get the current app version to show the user
+                app_ver = VERSION
+                try:
+                    rv = requests.get(f"{APP_SERVER}/version", timeout=8)
+                    if rv.status_code == 200:
+                        app_ver = rv.json().get("version", VERSION)
+                except Exception:
+                    pass
                 # Download the new exe
                 r = requests.get(f"{APP_SERVER}/app", timeout=60)
                 if r.status_code != 200:
                     return
                 new_exe = exe.with_name("BallchasingUploader.new.exe")
                 new_exe.write_bytes(r.content)
-                self.after(0, lambda v=server_ver: self._prompt_exe_update(v))
+                self.after(0, lambda v=app_ver: self._prompt_exe_update(v))
             except Exception:
                 pass
         threading.Thread(target=worker, daemon=True).start()
 
     def _prompt_exe_update(self, new_version: str):
         """Show the persistent update button below Start Watching."""
-        self._log(f"[update] App update v{new_version} ready — click the update button to restart.")
+        self._log(f"[update] v{new_version} available — click the update button to restart.")
         self._update_btn.configure(
-            text=f"⬆  App update v{new_version} available — Restart & Update")
+            text=f"⬆  Update to v{new_version} — Restart & Update")
         self._update_btn.pack(fill="x", padx=20, pady=(0, 6))
 
     def _apply_exe_update(self):
