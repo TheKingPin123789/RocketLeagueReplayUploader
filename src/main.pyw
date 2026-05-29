@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.202"
+VERSION          = "1.4.203"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1537,12 +1537,12 @@ class App(ctk.CTk):
         self.after(4000, self._check_launcher_update)
         self.after(5000, self._check_self_update)
         self.after(2000, self._check_exe_update)
-        self.after(1000, self._bg_cache_replays)
         self.after(800,  self._load_replays_for_main)
-        self.after(1500, self._scan_mirror_folder)
-        self.after(2000, lambda: self._dedup(silent=True))
-        self.after(3000, self._check_first_run)
-        self.after(1500, self._bg_build_index)
+        self.after(1200, self._bg_cache_replays)
+        self.after(1800, self._scan_mirror_folder)
+        self.after(2500, self._startup_dedup)
+        self.after(3500, self._bg_build_index)
+        self.after(4500, self._check_first_run)
         if self.config_data.get("launch_with_rl", False):
             self._rl_poll_thread_running = True
             threading.Thread(target=self._rl_poll_loop, daemon=True).start()
@@ -5998,6 +5998,14 @@ class App(ctk.CTk):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _startup_dedup(self):
+        """Run dedup on startup only if it hasn't run in the last 24 hours.
+        Skipping the MD5 pass saves reading 1-2 GB of replay data on slow drives."""
+        last = self.config_data.get("_last_dedup", 0)
+        if time.time() - last < 86400:   # 24 hours
+            return
+        self._dedup(silent=True)
+
     def _dedup(self, folder: str | None = None, silent: bool = False):
         """Find and remove duplicate replays + orphaned cache/upload entries."""
         if folder is None:
@@ -6093,6 +6101,10 @@ class App(ctk.CTk):
                 self.after(0, self._log, "[dedup] " + ",  ".join(parts) + ".")
             elif not silent:
                 self.after(0, self._log, "[dedup] Nothing to clean up.")
+
+            # Record timestamp so _startup_dedup can skip the next 24 h
+            self.config_data["_last_dedup"] = time.time()
+            self.after(0, save_config, self.config_data)
 
             if deleted_replays and self._cards:
                 self.after(300, self._load_replays)
