@@ -12,11 +12,16 @@
 
 cd /d "%~dp0.."
 
+echo Cleaning previous build artifacts...
+if exist "build\BallchasingUploader" rmdir /s /q "build\BallchasingUploader"
+if exist "dist" rmdir /s /q "dist"
+if exist "BallchasingUploader.spec" del /f "BallchasingUploader.spec"
+echo.
 echo Building BallchasingUploader.exe...
-python -m PyInstaller --onefile --noconsole ^
+py -3.12 -m PyInstaller --onefile --noconsole ^
   --icon="src\logo.ico" ^
   --name="BallchasingUploader" ^
-  --collect-submodules=tkinter ^
+  --runtime-tmpdir="." ^
   --hidden-import=watchdog ^
   --hidden-import=watchdog.observers ^
   --hidden-import=watchdog.events ^
