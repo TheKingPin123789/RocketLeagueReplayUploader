@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.214"
+VERSION          = "1.4.215"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -2267,10 +2267,9 @@ class App(ctk.CTk):
     def _on_canvas_resize(self):
         if self._resize_id is not None:
             self.after_cancel(self._resize_id)
-        # Clear immediately so the canvas doesn't show stretched/stale cards
-        # during the drag — a blank canvas is smoother than visual artifacts
-        self.canvas.delete("all")
-        self._resize_id = self.after(200, self._do_resize)
+        # Short debounce — text measurements are cached so recalc is fast
+        # enough to show live card reflow as the window is dragged
+        self._resize_id = self.after(30, self._do_resize)
 
     def _do_resize(self):
         self._resize_id = None
