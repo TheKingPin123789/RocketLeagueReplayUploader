@@ -6922,7 +6922,10 @@ class App(ctk.CTk):
                 pass
             dlg.destroy()
             self._show_toast("✓ Setup complete — you're ready to go!")
-            self.after(100, self._load_replays)    # scan the now-configured folder
+            self.after(100, self._load_replays)
+            # Background tasks ran before setup completed — re-run them now
+            self.after(1500, self._startup_dedup)
+            self.after(2000, self._bg_build_index)
 
         ctk.CTkButton(dlg, text="Done — let's go!",
                       command=_confirm).pack(pady=(8, 20))
