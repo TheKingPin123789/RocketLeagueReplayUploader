@@ -6102,19 +6102,21 @@ class App(ctk.CTk):
         path = Path(folder) / filename
         if not path.exists():
             return False
-        try:
-            m = hashlib.md5()
-            with open(path, "rb") as fh:
-                for chunk in iter(lambda: fh.read(65536), b""):
-                    m.update(chunk)
-            new_hash = m.hexdigest()
-        except OSError:
-            return False
 
-        new_rl_id = ""
-        cached = load_cached(filename)
-        if cached:
-            new_rl_id = _norm_rl_id(cached.get("rl_id", ""))
+        cached    = load_cached(filename)
+        new_rl_id = _norm_rl_id((cached or {}).get("rl_id", ""))
+
+        # Only hash the new file if we have no rl_id (needed for MD5 fallback)
+        new_hash = None
+        if not new_rl_id:
+            try:
+                m = hashlib.md5()
+                with open(path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        m.update(chunk)
+                new_hash = m.hexdigest()
+            except OSError:
+                return False
 
         for card in list(self._cards):
             if card["filename"] == filename:
@@ -6122,9 +6124,11 @@ class App(ctk.CTk):
             other_path = card["path"]
             if not other_path.exists():
                 continue
-            if new_rl_id:
-                other_info = load_cached(card["filename"]) or {}
-                if _norm_rl_id(other_info.get("rl_id", "")) == new_rl_id:
+            other_info   = load_cached(card["filename"]) or {}
+            other_rl_id  = _norm_rl_id(other_info.get("rl_id", ""))
+            if new_rl_id and other_rl_id:
+                # Both have rl_ids — fast compare, no disk read needed
+                if other_rl_id == new_rl_id:
                     older = path if path.stat().st_mtime < other_path.stat().st_mtime else other_path
                     try:
                         older.unlink()
@@ -6134,23 +6138,26 @@ class App(ctk.CTk):
                     except OSError:
                         pass
                     return False
-            try:
-                m2 = hashlib.md5()
-                with open(other_path, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(65536), b""):
-                        m2.update(chunk)
-                if m2.hexdigest() == new_hash:
-                    older = path if path.stat().st_mtime < other_path.stat().st_mtime else other_path
-                    try:
-                        older.unlink()
-                        self.after(0, self._log, f"[dedup] Removed duplicate: {older.name}")
-                        self.after(300, self._load_replays)
-                        return True
-                    except OSError:
-                        pass
-                    return False
-            except OSError:
-                continue
+            elif not new_rl_id and not other_rl_id:
+                # Neither has rl_id — fall back to MD5 (rare: both unparsed)
+                try:
+                    m2 = hashlib.md5()
+                    with open(other_path, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(65536), b""):
+                            m2.update(chunk)
+                    if m2.hexdigest() == new_hash:
+                        older = path if path.stat().st_mtime < other_path.stat().st_mtime else other_path
+                        try:
+                            older.unlink()
+                            self.after(0, self._log, f"[dedup] Removed duplicate: {older.name}")
+                            self.after(300, self._load_replays)
+                            return True
+                        except OSError:
+                            pass
+                        return False
+                except OSError:
+                    continue
+            # One has rl_id, other doesn't — can't reliably compare, skip
         return False
 
     def _check_single_dupe(self, filename: str, folder: str):
