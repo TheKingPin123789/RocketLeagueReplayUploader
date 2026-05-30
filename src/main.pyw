@@ -103,7 +103,7 @@ SCORE_W          = 52    # left score column width
 COMPACT_MIN_W    = 300   # minimum compact card width — 3-per-row only when window fits 3×this
 
 _COMPACT         = False   # toggled by the compact button; persisted in config
-_BC_SCAN_RUNNING = False   # True while _bg_build_index is fetching bc_ids
+_BC_SCAN_RUNNING = True    # starts True — cleared when scan finishes or is skipped
 
 _BELOW_NORMAL_PRIORITY = 0x00004000   # Windows BELOW_NORMAL_PRIORITY_CLASS
 _NORMAL_PRIORITY       = 0x00000020   # Windows NORMAL_PRIORITY_CLASS
@@ -164,7 +164,8 @@ C_CARD        = ("#EFEFEF", "#1D1D1F")
 C_BORDER      = ("#E0E0E5", "#2C2C2E")
 C_BORDER_FAIL   = ("#F5010A", "#F5010A")
 C_CARD_FAIL     = ("#FF8888", "#3E0000")
-C_BORDER_NO_BC  = ("#CC3300", "#CC3300")   # replay has no Ballchasing ID
+C_BORDER_NO_BC      = ("#CC3300", "#CC3300")   # confirmed not on Ballchasing
+C_BORDER_SCANNING   = ("#CC7700", "#CC7700")   # bc_id scan in progress — status unknown
 C_DIVIDER     = ("#CDCDD8", "#525256")
 C_SCORE_COL   = ("#E9E9E9", "#242426")
 C_NAME        = ("#000000", "#FFFFFF")
@@ -221,7 +222,8 @@ def _card_colors() -> dict:
         "border":      _c(C_BORDER),
         "border_fail":   _c(C_BORDER_FAIL),
         "card_fail":     _c(C_CARD_FAIL),
-        "border_no_bc":  _c(C_BORDER_NO_BC),
+        "border_no_bc":      _c(C_BORDER_NO_BC),
+        "border_scanning":   _c(C_BORDER_SCANNING),
         "divider":     _c(C_DIVIDER),
         "score_col":   _c(C_SCORE_COL),
         "name":        _c(C_NAME),
@@ -1015,8 +1017,11 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
     # ── card background + border ──────────────────────────────────────────────
     if entry.get("failed"):
         bg, bdr, bdr_w = cc["card_fail"], cc["border_fail"], 2
-    elif not entry.get("bc_id") and not entry.get("parsing") and not _BC_SCAN_RUNNING:
-        bg, bdr, bdr_w = cc["card"], cc["border_no_bc"], 2
+    elif not entry.get("bc_id") and not entry.get("parsing"):
+        if _BC_SCAN_RUNNING:
+            bg, bdr, bdr_w = cc["card"], cc["border_scanning"], 2   # orange — scan in progress
+        else:
+            bg, bdr, bdr_w = cc["card"], cc["border_no_bc"], 2      # red — confirmed not on BC
     else:
         bg, bdr, bdr_w = cc["card"], cc["border"], 1
     canvas.create_rectangle(x0, y, x1, y+h, fill=bg, outline=bdr, width=bdr_w)
@@ -1064,9 +1069,11 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
             rname = Path(filename).stem
     tags     = "  ·  ".join(t for t in [type_tag, mode_str] if t)
 
-    # Upload button shown only when no bc_id, not parsing/failed, and scan is not running
+    # Upload button only when confirmed not on BC (red border) — not during scan
     _show_upl = (not entry.get("bc_id") and not entry.get("parsing")
                  and not entry.get("failed") and not _BC_SCAN_RUNNING)
+    # Use scanning colour for the button too when scan is running
+    _upl_btn_scanning = _BC_SCAN_RUNNING and not entry.get("bc_id") and not entry.get("parsing")
     _upl_w    = (58 if not _COMPACT else 20) if _show_upl else 0
 
     if TAG_H == 0:
@@ -6868,6 +6875,9 @@ class App(ctk.CTk):
         api_key = self.config_data.get("api_key", "").strip()
         folder  = self.config_data.get("demos_folder", "").strip()
         if not api_key or not folder:
+            global _BC_SCAN_RUNNING
+            _BC_SCAN_RUNNING = False
+            self._schedule_redraw()
             return
         # If replays are still being parsed, reschedule — we want accurate
         # cache dates and rl_ids before scanning Ballchasing
@@ -6879,6 +6889,7 @@ class App(ctk.CTk):
             return
         self._index_wait_logged = False
         def _run():
+            global _BC_SCAN_RUNNING
             # Count how many local replays are missing a bc_id
             existing = set(load_upload_ids().keys())
             try:
@@ -6887,6 +6898,8 @@ class App(ctk.CTk):
             except Exception:
                 missing = 1  # assume there's work to do if we can't check
             if missing == 0:
+                _BC_SCAN_RUNNING = False
+                self.after(0, self._schedule_redraw)
                 return
             # Mark scan running so cards show neutral border instead of red
             global _BC_SCAN_RUNNING
@@ -6898,7 +6911,7 @@ class App(ctk.CTk):
             # Scan done — clear flag, refresh borders and recent replays
             _BC_SCAN_RUNNING = False
             self.after(0, self._refresh_card_bc_ids)
-            self.after(0, self._update_recent_replays)
+            self.after(100, self._update_recent_replays)   # slight delay so bc_ids are applied first
         threading.Thread(target=_run, daemon=True).start()
 
     def _refresh_card_bc_ids(self):
