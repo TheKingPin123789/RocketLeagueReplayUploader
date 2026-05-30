@@ -6778,10 +6778,16 @@ class App(ctk.CTk):
 
     def _bg_build_index(self):
         """Background: fetch user's BC replay list and populate upload_ids.json.
-        Read-only — no file uploads. Skips if all local replays already have bc_ids."""
+        Read-only — no file uploads. Skips if all local replays already have bc_ids.
+        Waits for replay parsing to finish first so cache dates are accurate."""
         api_key = self.config_data.get("api_key", "").strip()
         folder  = self.config_data.get("demos_folder", "").strip()
         if not api_key or not folder:
+            return
+        # If replays are still being parsed, reschedule — we want accurate
+        # cache dates and rl_ids before scanning Ballchasing
+        if self._parse_queue:
+            self.after(5000, self._bg_build_index)
             return
         def _run():
             # Count how many local replays are missing a bc_id
