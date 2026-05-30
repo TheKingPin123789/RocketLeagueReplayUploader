@@ -147,11 +147,6 @@ def _create_shortcut():
         # Respect the user's setting — default False so new installs don't get one
         if not load_config().get("desktop_shortcut", False):
             return
-        import ctypes, os as _os
-        desktop = Path(_os.path.join(
-            ctypes.windll.shell32.SHGetFolderPathW(0, 0x0000, 0, 0) or
-            str(Path.home() / "Desktop"),
-        ))
         lnk = Path.home() / "Desktop" / "Ballchasing Uploader.lnk"
         if lnk.exists():
             return          # already there — skip PowerShell entirely
