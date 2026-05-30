@@ -6096,6 +6096,63 @@ class App(ctk.CTk):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _check_single_dupe_sync(self, filename: str, folder: str) -> bool:
+        """Synchronous version of _check_single_dupe — runs inline, returns True if a
+        duplicate was found and deleted.  Used by _startup_dedup for batch processing."""
+        path = Path(folder) / filename
+        if not path.exists():
+            return False
+        try:
+            m = hashlib.md5()
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    m.update(chunk)
+            new_hash = m.hexdigest()
+        except OSError:
+            return False
+
+        new_rl_id = ""
+        cached = load_cached(filename)
+        if cached:
+            new_rl_id = _norm_rl_id(cached.get("rl_id", ""))
+
+        for card in list(self._cards):
+            if card["filename"] == filename:
+                continue
+            other_path = card["path"]
+            if not other_path.exists():
+                continue
+            if new_rl_id:
+                other_info = load_cached(card["filename"]) or {}
+                if _norm_rl_id(other_info.get("rl_id", "")) == new_rl_id:
+                    older = path if path.stat().st_mtime < other_path.stat().st_mtime else other_path
+                    try:
+                        older.unlink()
+                        self.after(0, self._log, f"[dedup] Removed duplicate: {older.name}")
+                        self.after(300, self._load_replays)
+                        return True
+                    except OSError:
+                        pass
+                    return False
+            try:
+                m2 = hashlib.md5()
+                with open(other_path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        m2.update(chunk)
+                if m2.hexdigest() == new_hash:
+                    older = path if path.stat().st_mtime < other_path.stat().st_mtime else other_path
+                    try:
+                        older.unlink()
+                        self.after(0, self._log, f"[dedup] Removed duplicate: {older.name}")
+                        self.after(300, self._load_replays)
+                        return True
+                    except OSError:
+                        pass
+                    return False
+            except OSError:
+                continue
+        return False
+
     def _check_single_dupe(self, filename: str, folder: str):
         """Fast duplicate check for a single newly-detected replay.
         Only hashes the one new file and compares against existing cards —
@@ -6207,15 +6264,28 @@ class App(ctk.CTk):
         if not new_files and not has_orphans:
             return  # everything matches — nothing to do
 
-        if new_files:
-            self._log(f"[dedup] {len(new_files)} new replay(s) — checking each…")
-            for i, path in enumerate(new_files):
-                delay = 2000 + i * 400
-                self.after(delay, lambda fn=path.name, fo=folder:
-                           self._check_single_dupe(fn, fo))
-
         if has_orphans:
-            self.after(1000, self._cleanup_orphans)
+            self.after(500, self._cleanup_orphans)
+
+        if new_files:
+            total = len(new_files)
+            self._log(f"[dedup] {total} new replay(s) — checking each…")
+
+            def _run():
+                done = 0
+                dupes = 0
+                for path in new_files:
+                    found = self._check_single_dupe_sync(path.name, folder)
+                    done += 1
+                    if found:
+                        dupes += 1
+                    if done % 25 == 0 or done == total:
+                        msg = f"[dedup] {done}/{total} checked"
+                        msg += f" — {dupes} duplicate(s) removed" if dupes else "…"
+                        self.after(0, self._log, msg)
+                    time.sleep(0.02)
+
+            threading.Thread(target=_run, daemon=True).start()
 
     def _dedup(self, folder: str | None = None, silent: bool = False):
         """Find and remove duplicate replays + orphaned cache/upload entries."""
