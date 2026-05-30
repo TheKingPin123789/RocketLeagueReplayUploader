@@ -4,8 +4,8 @@
 :: After building, upload with: python admin/deploy_server.py --launcher-only
 :: and manually scp the exe to the server.
 ::
-:: Requirements: Python 3.14 + PyInstaller installed
-::   pip install pyinstaller
+:: Requirements: Python 3.12 + PyInstaller installed
+::   pip install pyinstaller  (using py -3.12)
 ::
 :: IMPORTANT: bump LAUNCHER_VERSION in launcher.py before building.
 :: ─────────────────────────────────────────────────────────────────────────────
@@ -13,7 +13,7 @@
 cd /d "%~dp0.."
 
 echo Cleaning previous build artifacts...
-if exist "build\BallchasingUploader" rmdir /s /q "build\BallchasingUploader"
+if exist "build" rmdir /s /q "build"
 if exist "dist" rmdir /s /q "dist"
 if exist "BallchasingUploader.spec" del /f "BallchasingUploader.spec"
 echo.
@@ -22,9 +22,17 @@ py -3.12 -m PyInstaller --onefile --noconsole ^
   --icon="src\logo.ico" ^
   --name="BallchasingUploader" ^
   --runtime-tmpdir="." ^
-  --hidden-import=watchdog ^
-  --hidden-import=watchdog.observers ^
-  --hidden-import=watchdog.events ^
+  --collect-submodules=tkinter ^
+  --hidden-import="ctypes.wintypes" ^
+  --hidden-import="webbrowser" ^
+  --hidden-import="winreg" ^
+  --hidden-import="hashlib" ^
+  --hidden-import="calendar" ^
+  --hidden-import="unicodedata" ^
+  --hidden-import="queue" ^
+  --hidden-import="shutil" ^
+  --hidden-import="watchdog" ^
+  --hidden-import="watchdog.observers" ^
   launcher.py
 
 if errorlevel 1 (
