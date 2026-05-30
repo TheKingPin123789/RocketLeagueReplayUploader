@@ -6552,8 +6552,6 @@ class App(ctk.CTk):
                                            f"[download] ceiling set at {1/ceiling:.2f}/s")
                             else:
                                 delay = max(MIN_DELAY, round(delay - 0.1, 3))
-                                self.after(0, self._update_dl_status,
-                                           f"[download] ramping up: {1/delay:.2f}/s")
                         elif delay > ceiling + 0.05:
                             delay = max(ceiling, round(delay - 0.1, 3))
                             self.after(0, self._update_dl_status,
