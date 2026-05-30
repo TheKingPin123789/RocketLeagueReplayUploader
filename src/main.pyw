@@ -102,7 +102,8 @@ CARD_MARGIN_X    = 10    # left/right margin
 SCORE_W          = 52    # left score column width
 COMPACT_MIN_W    = 300   # minimum compact card width — 3-per-row only when window fits 3×this
 
-_COMPACT = False   # toggled by the compact button; persisted in config
+_COMPACT         = False   # toggled by the compact button; persisted in config
+_BC_SCAN_RUNNING = False   # True while _bg_build_index is fetching bc_ids
 
 _BELOW_NORMAL_PRIORITY = 0x00004000   # Windows BELOW_NORMAL_PRIORITY_CLASS
 _NORMAL_PRIORITY       = 0x00000020   # Windows NORMAL_PRIORITY_CLASS
@@ -1014,7 +1015,7 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
     # ── card background + border ──────────────────────────────────────────────
     if entry.get("failed"):
         bg, bdr, bdr_w = cc["card_fail"], cc["border_fail"], 2
-    elif not entry.get("bc_id") and not entry.get("parsing"):
+    elif not entry.get("bc_id") and not entry.get("parsing") and not _BC_SCAN_RUNNING:
         bg, bdr, bdr_w = cc["card"], cc["border_no_bc"], 2
     else:
         bg, bdr, bdr_w = cc["card"], cc["border"], 1
@@ -1063,8 +1064,9 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
             rname = Path(filename).stem
     tags     = "  ·  ".join(t for t in [type_tag, mode_str] if t)
 
-    # Upload button is shown on cards that have no Ballchasing ID and are not parsing/failed
-    _show_upl = not entry.get("bc_id") and not entry.get("parsing") and not entry.get("failed")
+    # Upload button shown only when no bc_id, not parsing/failed, and scan is not running
+    _show_upl = (not entry.get("bc_id") and not entry.get("parsing")
+                 and not entry.get("failed") and not _BC_SCAN_RUNNING)
     _upl_w    = (58 if not _COMPACT else 20) if _show_upl else 0
 
     if TAG_H == 0:
@@ -6880,12 +6882,16 @@ class App(ctk.CTk):
                 missing = 1  # assume there's work to do if we can't check
             if missing == 0:
                 return
+            # Mark scan running so cards show neutral border instead of red
+            global _BC_SCAN_RUNNING
+            _BC_SCAN_RUNNING = True
+            self.after(0, self._schedule_redraw)
             saved = build_upload_id_index(
                 api_key, demos_folder=folder,
                 log_fn=lambda m, t=None: self.after(0, self._log, m, t))
-            if saved:
-                # Refresh bc_id on all in-memory cards so borders update
-                self.after(0, self._refresh_card_bc_ids)
+            # Scan done — clear flag, refresh borders
+            _BC_SCAN_RUNNING = False
+            self.after(0, self._refresh_card_bc_ids)
         threading.Thread(target=_run, daemon=True).start()
 
     def _refresh_card_bc_ids(self):
