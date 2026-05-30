@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.206"
+VERSION          = "1.4.207"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -106,6 +106,7 @@ _COMPACT = False   # toggled by the compact button; persisted in config
 
 _BELOW_NORMAL_PRIORITY = 0x00004000   # Windows BELOW_NORMAL_PRIORITY_CLASS
 _NORMAL_PRIORITY       = 0x00000020   # Windows NORMAL_PRIORITY_CLASS
+_IDLE_PRIORITY         = 0x00000040   # Windows IDLE_PRIORITY_CLASS (only runs when CPU is free)
 _low_priority_mode     = False        # updated by App when setting changes
 
 def _set_process_priority(low: bool) -> None:
@@ -805,7 +806,8 @@ def parse_card_data(path: Path) -> dict | None:
         return None
     try:
         data = Path(path).read_bytes()
-        _priority = _BELOW_NORMAL_PRIORITY if _low_priority_mode else 0
+        # In low priority mode use IDLE so rattletrap only runs when CPU is free
+        _priority = _IDLE_PRIORITY if _low_priority_mode else 0
         proc = subprocess.run(
             [str(RATTLETRAP)],
             input=data, capture_output=True, timeout=30,
