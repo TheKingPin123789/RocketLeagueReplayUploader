@@ -6857,8 +6857,12 @@ class App(ctk.CTk):
         # If replays are still being parsed, reschedule — we want accurate
         # cache dates and rl_ids before scanning Ballchasing
         if self._parse_queue:
+            if not getattr(self, "_index_wait_logged", False):
+                self._index_wait_logged = True
+                self._log("[index] Waiting for replays to finish parsing before scanning Ballchasing…")
             self.after(5000, self._bg_build_index)
             return
+        self._index_wait_logged = False
         def _run():
             # Count how many local replays are missing a bc_id
             existing = set(load_upload_ids().keys())
