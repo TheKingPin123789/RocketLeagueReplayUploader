@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.6"
+VERSION          = "1.0.7"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -2719,12 +2719,11 @@ class App(ctk.CTk):
                     r = requests.get(f"https://ballchasing.com/api/replays/{bid}",
                                      headers={"Authorization": api_key}, timeout=10)
                     if r.status_code == 404:
-                        # Replay deleted on BC — clear stale data
-                        from pathlib import Path as _P
+                        # Replay deleted on BC — clear the stale bc_id only
+                        # (keep cached stats locally, they're still useful)
                         ids = load_upload_ids()
                         ids.pop(c["filename"], None)
                         _atomic_write_json(UPLOAD_IDS_FILE, ids)
-                        (_P(str(CACHE_DIR)) / f"bc_{bid}.json").unlink(missing_ok=True)
                         self.after(0, self._set_card_bc_id, c["filename"], "")
                         self.after(0, self._log,
                                    f"[detail] {c['filename']} — replay was deleted on Ballchasing", "red")
