@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.210"
+VERSION          = "1.4.211"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6452,6 +6452,9 @@ class App(ctk.CTk):
                                 pass
                         existing_ids.add(_norm_id(dest.stem))
                         save_upload_id(dest.name, rid)
+                        # Check this replay for duplicates while the next one downloads
+                        self.after(0, lambda fn=dest.name, fo=str(dest_dir):
+                                   self._check_single_dupe(fn, fo))
                         bc_cache = CACHE_DIR / f"bc_{rid}.json"
                         if not bc_cache.exists():
                             try:
@@ -6526,7 +6529,8 @@ class App(ctk.CTk):
         self.after(0, self._log,
                    f"[download] {label} — {total_dl} downloaded, {total_skip} skipped.")
         if self._download_active:
-            self.after(0, self._dedup, folder)
+            # Orphan cleanup only — duplicate checks ran per-file during download
+            self.after(0, self._cleanup_orphans)
 
     def _fetch_quota(self):
         api_key = self.config_data.get("api_key", "").strip()
