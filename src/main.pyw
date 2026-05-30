@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.211"
+VERSION          = "1.4.212"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -4242,6 +4242,15 @@ class App(ctk.CTk):
                      ).grid(row=19, column=0, columnspan=3,
                             padx=20, pady=(0, 10), sticky="w")
 
+        ctk.CTkButton(pg, text="Full Duplicate Scan",
+                      command=self._run_manual_dedup
+                      ).grid(row=20, column=0, columnspan=3,
+                             padx=20, pady=(8, 2), sticky="w")
+        ctk.CTkLabel(pg, text="MD5-hash every replay to find exact duplicates. Use when you suspect missed duplicates.",
+                     font=ctk.CTkFont(size=11), text_color=C_DIM, anchor="w"
+                     ).grid(row=21, column=0, columnspan=3,
+                            padx=20, pady=(0, 10), sticky="w")
+
 
     # ── page switching ────────────────────────────────────────────────────────
 
@@ -6115,6 +6124,28 @@ class App(ctk.CTk):
                 except OSError:
                     continue
         threading.Thread(target=worker, daemon=True).start()
+
+    def _run_manual_dedup(self):
+        """Triggered from Settings — runs full dedup with a time estimate logged first."""
+        folder = self.config_data.get("demos_folder", "").strip()
+        if not folder or not Path(folder).is_dir():
+            self._log("[dedup] No demos folder configured.", "red")
+            return
+        try:
+            count = sum(1 for _ in Path(folder).glob("*.replay"))
+        except Exception:
+            count = 0
+        # ~50 ms per replay on a typical HDD
+        secs = round(count * 0.05)
+        if secs < 1:
+            estimate = "< 1 second"
+        elif secs < 60:
+            estimate = f"~{secs} seconds"
+        else:
+            estimate = f"~{secs // 60}m {secs % 60}s"
+        self._log(f"[dedup] Full scan of {count} replay(s) — estimated {estimate}…")
+        self._show_main()   # switch back so the log is visible
+        self._dedup()
 
     def _startup_dedup(self):
         """On startup, match replays to cache entries to find what's new.
