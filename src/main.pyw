@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.207"
+VERSION          = "1.4.208"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -5744,10 +5744,11 @@ class App(ctk.CTk):
             self.after(0, self._bg_cache_replays)
             # Add the new replay card so Recent Replays updates immediately
             self.after(500, lambda fn=filename, fo=folder: self._add_detected_card(fn, fo))
-            # Clean orphans, check duplicates, enforce folder limit on new replay
+            # Clean orphans and enforce limit — no need to MD5-hash everything
+            # for a single new file; just check if this file itself is a duplicate
             self.after(1000, self._cleanup_orphans)
             self.after(1500, self._enforce_replay_limit)
-            self.after(2000, lambda: self._dedup(silent=True))
+            self.after(2000, lambda fn=filename, fo=folder: self._check_single_dupe(fn, fo))
 
         handler = ReplayHandler(on_new_replay)
         self.observer = Observer()
@@ -6050,6 +6051,69 @@ class App(ctk.CTk):
                     self.after(0, self._log,
                                f"[limit] could not delete {p.name}: {e}", "red")
 
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _check_single_dupe(self, filename: str, folder: str):
+        """Fast duplicate check for a single newly-detected replay.
+        Only hashes the one new file and compares against existing cards —
+        far cheaper than full dedup which hashes every file."""
+        def worker():
+            path = Path(folder) / filename
+            if not path.exists():
+                return
+            try:
+                # Hash only the new file
+                m = hashlib.md5()
+                with open(path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        m.update(chunk)
+                new_hash = m.hexdigest()
+            except OSError:
+                return
+
+            # Also get its rl_id from cache (if already parsed)
+            new_rl_id = ""
+            cached = load_cached(filename)
+            if cached:
+                new_rl_id = _norm_rl_id(cached.get("rl_id", ""))
+
+            # Compare against every existing card
+            for card in list(self._cards):
+                if card["filename"] == filename:
+                    continue
+                other_path = card["path"]
+                if not other_path.exists():
+                    continue
+                # Check by rl_id first (fast, no disk read)
+                if new_rl_id:
+                    other_info = load_cached(card["filename"]) or {}
+                    if _norm_rl_id(other_info.get("rl_id", "")) == new_rl_id:
+                        # Same match — delete the older file
+                        older = path if path.stat().st_mtime < other_path.stat().st_mtime else other_path
+                        try:
+                            older.unlink()
+                            self.after(0, self._log, f"[dedup] Removed duplicate: {older.name}")
+                            self.after(300, self._load_replays)
+                        except OSError:
+                            pass
+                        return
+                # Fall back to MD5 only if rl_id unavailable
+                try:
+                    m2 = hashlib.md5()
+                    with open(other_path, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(65536), b""):
+                            m2.update(chunk)
+                    if m2.hexdigest() == new_hash:
+                        older = path if path.stat().st_mtime < other_path.stat().st_mtime else other_path
+                        try:
+                            older.unlink()
+                            self.after(0, self._log, f"[dedup] Removed duplicate: {older.name}")
+                            self.after(300, self._load_replays)
+                        except OSError:
+                            pass
+                        return
+                except OSError:
+                    continue
         threading.Thread(target=worker, daemon=True).start()
 
     def _startup_dedup(self):
