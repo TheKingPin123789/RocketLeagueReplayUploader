@@ -2719,18 +2719,19 @@ class App(ctk.CTk):
                     r = requests.get(f"https://ballchasing.com/api/replays/{bid}",
                                      headers={"Authorization": api_key}, timeout=10)
                     if r.status_code == 404:
-                        # Replay deleted on BC — clear bc_id, keep cached stats
+                        # Replay deleted on BC — clear bc_id and orphaned stats cache
                         ids = load_upload_ids()
                         ids.pop(c["filename"], None)
                         _atomic_write_json(UPLOAD_IDS_FILE, ids)
+                        (CACHE_DIR / f"bc_{bid}.json").unlink(missing_ok=True)
                         self.after(0, self._set_card_bc_id, c["filename"], "")
+                        self.after(0, self._update_recent_replays)
                         self.after(0, self._log,
                                    f"[detail] {c['filename']} — deleted on Ballchasing, re-upload to restore", "red")
                         if self._current_card and self._current_card["filename"] == c["filename"]:
                             cached2 = load_cached(c["filename"])
-                            # Still show the locally cached stats, just add upload button
                             self.after(0, lambda: self._render_detail(
-                                cached2, c, bi, show_upload_btn=True))
+                                cached2, c, None, show_upload_btn=True))
                 except Exception:
                     pass
             threading.Thread(target=_verify, daemon=True).start()
