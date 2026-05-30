@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.209"
+VERSION          = "1.4.210"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6117,20 +6117,39 @@ class App(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _startup_dedup(self):
-        """Run dedup on startup only if the replay count changed since last run.
-        If nothing was added or removed while the app was closed, skip the
-        expensive MD5 pass entirely."""
+        """On startup, find replays that appeared while the app was closed and
+        process each one individually — same as if the watcher had caught them.
+        Only falls back to full dedup if files were also deleted (orphan cleanup)."""
         folder = self.config_data.get("demos_folder", "").strip()
         if not folder or not Path(folder).is_dir():
             return
+
+        last_run = self.config_data.get("_last_run", 0)
         try:
-            current_count = sum(1 for _ in Path(folder).glob("*.replay"))
+            all_files  = list(Path(folder).glob("*.replay"))
+            new_files  = [p for p in all_files if p.stat().st_mtime > last_run]
+            cur_count  = len(all_files)
+            last_count = self.config_data.get("_last_dedup_count", -1)
         except Exception:
             return
-        last_count = self.config_data.get("_last_dedup_count", -1)
-        if current_count == last_count:
-            return   # nothing changed while we were closed — skip
-        self._dedup(silent=True)
+
+        if not new_files and cur_count == last_count:
+            return  # nothing changed at all — skip entirely
+
+        # Update count now so next startup has the right baseline
+        self.config_data["_last_dedup_count"] = cur_count
+        save_config(self.config_data)
+
+        if new_files and cur_count >= last_count:
+            # Only additions — process each new file individually, no full hash
+            self._log(f"[dedup] {len(new_files)} new replay(s) since last run — checking each…")
+            for i, path in enumerate(new_files):
+                delay = 2000 + i * 500   # stagger: 2s, 2.5s, 3s …
+                self.after(delay, lambda fn=path.name, fo=folder:
+                           self._check_single_dupe(fn, fo))
+        else:
+            # Files were also deleted while closed — run full dedup for orphan cleanup
+            self._dedup(silent=True)
 
     def _dedup(self, folder: str | None = None, silent: bool = False):
         """Find and remove duplicate replays + orphaned cache/upload entries."""
@@ -7101,6 +7120,9 @@ class App(ctk.CTk):
         self._autosave_ids_entry()
         self._flush_save_uploaded()   # don't lose pending uploaded.json write
         self._stop_watching()
+        # Save shutdown timestamp so next startup knows which files are new
+        self.config_data["_last_run"] = time.time()
+        save_config(self.config_data)
         self.destroy()
 
 
