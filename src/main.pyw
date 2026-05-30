@@ -5345,6 +5345,7 @@ class App(ctk.CTk):
             root.title("Select Main Demos Folder")
             root.resizable(False, False)
             root.grab_set()
+            root.attributes("-topmost", True)
             root.minsize(380, 0)
             ctk.CTkLabel(root,
                          text="Multiple folders found.\nWhich one is your Main Demos Folder?",
@@ -5383,6 +5384,7 @@ class App(ctk.CTk):
                 root2.title("Select Secondary Demos Folder")
                 root2.resizable(False, False)
                 root2.grab_set()
+                root2.attributes("-topmost", True)
                 root2.minsize(380, 0)
                 root2.protocol("WM_DELETE_WINDOW",
                                lambda: (mirror_var.set(""), root2.destroy()))
@@ -6920,7 +6922,8 @@ class App(ctk.CTk):
                 pass
             dlg.destroy()
             self._show_toast("✓ Setup complete — you're ready to go!")
-            self.after(100, self._load_replays)    # scan the now-configured folder
+            self.after(100, self._load_replays)       # scan the now-configured folder
+            self.after(2000, self._bg_build_index)    # populate bc_ids from Ballchasing
 
         ctk.CTkButton(dlg, text="Done — let's go!",
                       command=_confirm).pack(pady=(8, 20))
