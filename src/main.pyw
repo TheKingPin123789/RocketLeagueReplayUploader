@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.205"
+VERSION          = "1.4.206"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1493,9 +1493,8 @@ class App(ctk.CTk):
         # Snapshot the exe's launcher version before _check_launcher_update
         # can update it in memory — used by _check_exe_update
         self._exe_launcher_version = self.config_data.get("_launcher_version", "")
-        # Apply low-priority mode before any heavy work starts
-        if self.config_data.get("low_priority_mode", False):
-            _set_process_priority(True)
+        # Low priority mode kicks in AFTER launch, not during startup
+        # (startup runs at normal priority so it loads quickly)
         # Sync desktop shortcut immediately (before window renders) so the old
         # frozen launcher's unconditional _create_shortcut() is undone before
         # the user sees the desktop.
@@ -1562,6 +1561,8 @@ class App(ctk.CTk):
         self.after(2500, self._startup_dedup)
         self.after(3500, self._bg_build_index)
         self.after(4500, self._check_first_run)
+        # After startup tasks finish, activate focus-aware priority if enabled
+        self.after(6000, self._setup_priority_focus)
         if self.config_data.get("launch_with_rl", False):
             self._rl_poll_thread_running = True
             threading.Thread(target=self._rl_poll_loop, daemon=True).start()
@@ -5465,9 +5466,8 @@ class App(ctk.CTk):
         self.config_data["desktop_shortcut"] = self.desktop_shortcut_var.get()
         self.config_data["launch_with_rl"]   = self.launch_with_rl_var.get()
         self.config_data["auto_fetch_bc"]     = self.auto_fetch_bc_var.get()
-        low = self.low_priority_var.get()
-        self.config_data["low_priority_mode"] = low
-        _set_process_priority(low)
+        self.config_data["low_priority_mode"] = self.low_priority_var.get()
+        self._update_priority_for_focus()
         self.config_data["theme"]            = self.theme_var.get()
         try:
             limit = int(self.replay_limit_var.get())
@@ -5526,6 +5526,25 @@ class App(ctk.CTk):
                 return True
         except OSError:
             return False
+
+    def _setup_priority_focus(self):
+        """After startup: bind focus events so priority drops when app is in background."""
+        self._update_priority_for_focus()
+        self.bind("<FocusIn>",  lambda e: self._on_app_focus(True),  add="+")
+        self.bind("<FocusOut>", lambda e: self._on_app_focus(False), add="+")
+
+    def _on_app_focus(self, focused: bool):
+        """Called when the app gains or loses focus."""
+        if self.config_data.get("low_priority_mode", False):
+            _set_process_priority(low=not focused)
+
+    def _update_priority_for_focus(self):
+        """Apply correct priority based on current focus and setting."""
+        if self.config_data.get("low_priority_mode", False):
+            focused = self.focus_get() is not None
+            _set_process_priority(low=not focused)
+        else:
+            _set_process_priority(low=False)
 
     def _set_run_on_startup(self, enabled: bool):
         try:
