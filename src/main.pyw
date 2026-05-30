@@ -327,6 +327,9 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
         # Find the oldest local replay date to use as a scan cutoff.
         # BC returns replays sorted newest-first, so once we pass this date
         # (with a 3-day buffer) the remaining replays can't be here.
+        # Always check both cache dates AND file mtimes — on a fresh install the
+        # cache only covers recently parsed replays, so cache alone gives a
+        # cutoff that's far too recent and stops the scan too early.
         oldest_dt: datetime | None = None
         for cf in CACHE_DIR.glob("*.json"):
             if cf.name.startswith("bc_"):
@@ -339,8 +342,8 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
                         oldest_dt = dt
             except Exception:
                 pass
-        # Also check file mtimes as fallback when cache has no dates
-        if demos_folder and oldest_dt is None:
+        # Always check file mtimes too — whichever is older wins
+        if demos_folder:
             for rp in Path(demos_folder).glob("*.replay"):
                 try:
                     dt = datetime.fromtimestamp(rp.stat().st_mtime)
