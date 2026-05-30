@@ -31,7 +31,7 @@ LOGO_FILE       = BASE / "src" / "logo.ico"
 APP_EXE_FILE    = BASE / "BallchasingUploader.exe"
 SERVER_HTTP  = "http://46.101.184.78:8766"
 SERVER_HTTPS = "https://46.101.184.78:8767"
-LAUNCHER_VERSION = "2.0"
+LAUNCHER_VERSION = "1.0"
 
 # ── certificate management ────────────────────────────────────────────────────
 def _cert_days_remaining() -> int:
