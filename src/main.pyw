@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.2"
+VERSION          = "1.0.3"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -938,12 +938,26 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
         on_status(name, "skipped"); return
     on_status(name, "uploading")
     wait_for_write(path)
+    # Build a human-readable upload filename from parsed metadata so Ballchasing
+    # shows a proper title instead of the raw UUID filename.
+    upload_name = name
+    cached = load_cached(name)
+    if cached:
+        rn = (cached.get("replay_name") or "").strip()
+        if not rn:
+            date_part = (cached.get("date") or "")[:10]
+            type_tag  = replay_type(cached)
+            ts        = cached.get("team_size") or 0
+            mode_str  = {1: "Duel", 2: "Doubles", 3: "Standard", 4: "Chaos"}.get(ts, "")
+            rn = " ".join(p for p in [date_part, type_tag, mode_str] if p)
+        if rn:
+            upload_name = f"{rn}.replay"
     for attempt in range(1, 4):
         try:
             with open(path, "rb") as f:
                 resp = requests.post(UPLOAD_URL,
                     headers={"Authorization": config["api_key"]},
-                    files={"file": (name, f, "application/octet-stream")},
+                    files={"file": (upload_name, f, "application/octet-stream")},
                     data={"visibility": config.get("visibility", "unlisted")},
                     timeout=60)
             if resp.status_code in (201, 409):
