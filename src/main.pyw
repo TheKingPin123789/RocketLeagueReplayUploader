@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.203"
+VERSION          = "1.4.204"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6035,8 +6035,13 @@ class App(ctk.CTk):
             rl_id_groups: dict[str, list[Path]] = {}
             for path in replay_files:
                 try:
-                    h = hashlib.md5(path.read_bytes()).hexdigest()
-                    hash_groups.setdefault(h, []).append(path)
+                    # Chunked read — never loads more than 64 KB at once
+                    # so RAM stays flat regardless of replay file size
+                    m = hashlib.md5()
+                    with open(path, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(65536), b""):
+                            m.update(chunk)
+                    hash_groups.setdefault(m.hexdigest(), []).append(path)
                 except OSError:
                     pass
                 cached = load_cached(path.name)
