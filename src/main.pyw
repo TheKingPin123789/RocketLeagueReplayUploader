@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.5"
+VERSION          = "1.0.6"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -2707,6 +2707,34 @@ class App(ctk.CTk):
                 self._log(f"[detail] {fn} — no Ballchasing ID saved, showing upload button")
             self._render_detail(cached, card, bc_info,
                                 show_upload_btn=(not bc_id))
+
+        if bc_id and bc_info is not None:
+            # Stats are cached — silently verify BC still has this replay in background.
+            # If deleted on BC, clear the stale bc_id and cached stats so card turns red.
+            def _verify(c=card, bid=bc_id):
+                api_key = self.config_data.get("api_key", "")
+                if not api_key:
+                    return
+                try:
+                    r = requests.get(f"https://ballchasing.com/api/replays/{bid}",
+                                     headers={"Authorization": api_key}, timeout=10)
+                    if r.status_code == 404:
+                        # Replay deleted on BC — clear stale data
+                        from pathlib import Path as _P
+                        ids = load_upload_ids()
+                        ids.pop(c["filename"], None)
+                        _atomic_write_json(UPLOAD_IDS_FILE, ids)
+                        (_P(str(CACHE_DIR)) / f"bc_{bid}.json").unlink(missing_ok=True)
+                        self.after(0, self._set_card_bc_id, c["filename"], "")
+                        self.after(0, self._log,
+                                   f"[detail] {c['filename']} — replay was deleted on Ballchasing", "red")
+                        if self._current_card and self._current_card["filename"] == c["filename"]:
+                            cached2 = load_cached(c["filename"])
+                            self.after(0, lambda: self._render_detail(
+                                cached2, c, None, show_upload_btn=True))
+                except Exception:
+                    pass
+            threading.Thread(target=_verify, daemon=True).start()
 
         if bc_id and bc_info is None:
             # bc_id known but stats not cached yet — fetch with retries (Ballchasing
