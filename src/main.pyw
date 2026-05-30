@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.204"
+VERSION          = "1.4.205"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -103,6 +103,21 @@ SCORE_W          = 52    # left score column width
 COMPACT_MIN_W    = 300   # minimum compact card width — 3-per-row only when window fits 3×this
 
 _COMPACT = False   # toggled by the compact button; persisted in config
+
+_BELOW_NORMAL_PRIORITY = 0x00004000   # Windows BELOW_NORMAL_PRIORITY_CLASS
+_NORMAL_PRIORITY       = 0x00000020   # Windows NORMAL_PRIORITY_CLASS
+_low_priority_mode     = False        # updated by App when setting changes
+
+def _set_process_priority(low: bool) -> None:
+    """Set the whole process to below-normal or normal CPU priority."""
+    global _low_priority_mode
+    _low_priority_mode = low
+    try:
+        import ctypes as _ct
+        h = _ct.windll.kernel32.GetCurrentProcess()
+        _ct.windll.kernel32.SetPriorityClass(h, _BELOW_NORMAL_PRIORITY if low else _NORMAL_PRIORITY)
+    except Exception:
+        pass
 
 def _dims():
     if _COMPACT:
@@ -790,10 +805,11 @@ def parse_card_data(path: Path) -> dict | None:
         return None
     try:
         data = Path(path).read_bytes()
+        _priority = _BELOW_NORMAL_PRIORITY if _low_priority_mode else 0
         proc = subprocess.run(
             [str(RATTLETRAP)],
             input=data, capture_output=True, timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=subprocess.CREATE_NO_WINDOW | _priority,
         )
         if proc.returncode != 0:
             return None
@@ -1477,6 +1493,9 @@ class App(ctk.CTk):
         # Snapshot the exe's launcher version before _check_launcher_update
         # can update it in memory — used by _check_exe_update
         self._exe_launcher_version = self.config_data.get("_launcher_version", "")
+        # Apply low-priority mode before any heavy work starts
+        if self.config_data.get("low_priority_mode", False):
+            _set_process_priority(True)
         # Sync desktop shortcut immediately (before window renders) so the old
         # frozen launcher's unconditional _create_shortcut() is undone before
         # the user sees the desktop.
@@ -4166,9 +4185,20 @@ class App(ctk.CTk):
                       button_hover_color=("#bebebe", "#f0f0f0")
                       ).grid(row=11, column=1, sticky="w", padx=8, pady=8)
 
-        _lbl(12, "Replay Folder Limit")
+        _lbl(12, "Low Priority Mode")
+        self.low_priority_var = ctk.BooleanVar(
+            value=self.config_data.get("low_priority_mode", False))
+        ctk.CTkSwitch(pg, text="Run at below-normal CPU priority (recommended for low-end PCs)",
+                      variable=self.low_priority_var,
+                      onvalue=True, offvalue=False,
+                      progress_color=("#3B8ED0", "#1F6AA5"),
+                      button_color=("#d0d0d0", "white"),
+                      button_hover_color=("#bebebe", "#f0f0f0")
+                      ).grid(row=12, column=1, sticky="w", padx=8, pady=8)
+
+        _lbl(13, "Replay Folder Limit")
         limit_frame = ctk.CTkFrame(pg, fg_color="transparent")
-        limit_frame.grid(row=12, column=1, sticky="w", padx=8, pady=8)
+        limit_frame.grid(row=13, column=1, sticky="w", padx=8, pady=8)
         self.replay_limit_var = tk.StringVar(
             value=str(self.config_data.get("replay_limit", 0)))
         limit_entry = ctk.CTkEntry(limit_frame, textvariable=self.replay_limit_var,
@@ -4180,33 +4210,33 @@ class App(ctk.CTk):
                      ).pack(side="left")
 
         # ── Appearance ────────────────────────────────────────────────────────
-        _section(13, "Appearance")
+        _section(14, "Appearance")
 
-        _lbl(14, "Theme")
+        _lbl(15, "Theme")
         self.theme_var = ctk.StringVar(
             value=self.config_data.get("theme", "dark"))
         ctk.CTkSegmentedButton(pg, values=["dark", "light", "system"],
                                variable=self.theme_var,
                                command=self._on_theme_change,
                                width=200
-                               ).grid(row=14, column=1, sticky="w",
+                               ).grid(row=15, column=1, sticky="w",
                                       padx=8, pady=8)
 
-        _lbl(15, "Colours")
+        _lbl(16, "Colours")
         ctk.CTkButton(pg, text="Customize Colors",
                       command=self._open_color_editor
-                      ).grid(row=15, column=1, sticky="w", padx=8, pady=8)
+                      ).grid(row=16, column=1, sticky="w", padx=8, pady=8)
 
         # ── Actions ───────────────────────────────────────────────────────────
-        _section(16, "Actions")
+        _section(17, "Actions")
 
         ctk.CTkButton(pg, text="Download Replays from Ballchasing",
                       command=self._confirm_download
-                      ).grid(row=17, column=0, columnspan=3,
+                      ).grid(row=18, column=0, columnspan=3,
                              padx=20, pady=(8, 2), sticky="w")
         ctk.CTkLabel(pg, text="Fetch replays from your Ballchasing account into the local cache.",
                      font=ctk.CTkFont(size=11), text_color=C_DIM, anchor="w"
-                     ).grid(row=18, column=0, columnspan=3,
+                     ).grid(row=19, column=0, columnspan=3,
                             padx=20, pady=(0, 10), sticky="w")
 
 
@@ -5434,7 +5464,10 @@ class App(ctk.CTk):
         self.config_data["upload_on_detect"] = self.upload_on_detect_var.get()
         self.config_data["desktop_shortcut"] = self.desktop_shortcut_var.get()
         self.config_data["launch_with_rl"]   = self.launch_with_rl_var.get()
-        self.config_data["auto_fetch_bc"]    = self.auto_fetch_bc_var.get()
+        self.config_data["auto_fetch_bc"]     = self.auto_fetch_bc_var.get()
+        low = self.low_priority_var.get()
+        self.config_data["low_priority_mode"] = low
+        _set_process_priority(low)
         self.config_data["theme"]            = self.theme_var.get()
         try:
             limit = int(self.replay_limit_var.get())
