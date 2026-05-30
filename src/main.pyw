@@ -6901,8 +6901,7 @@ class App(ctk.CTk):
                 _BC_SCAN_RUNNING = False
                 self.after(0, self._schedule_redraw)
                 return
-            # Mark scan running so cards show neutral border instead of red
-            global _BC_SCAN_RUNNING
+            # _BC_SCAN_RUNNING is already True from module init — trigger redraw
             _BC_SCAN_RUNNING = True
             self.after(0, self._schedule_redraw)
             saved = build_upload_id_index(
