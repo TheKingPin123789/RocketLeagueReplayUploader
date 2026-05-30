@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.4"
+VERSION          = "1.0.5"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -971,7 +971,7 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
                             if upload_title and resp.status_code == 201:
                                 try:
                                     requests.patch(
-                                        f"https://ballchasing.com/api/v2/replays/{bc_id}",
+                                        f"https://ballchasing.com/api/replays/{bc_id}",
                                         headers={"Authorization": config["api_key"]},
                                         json={"title": upload_title},
                                         timeout=10)
