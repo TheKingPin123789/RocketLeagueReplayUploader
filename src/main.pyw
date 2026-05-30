@@ -3172,6 +3172,7 @@ class App(ctk.CTk):
                         if card.get("filename") == n:
                             card["uploaded"] = True
                         self._schedule_redraw()
+                        self._update_recent_replays()
                     self.after(0, _mark)
                     self.after(2000, self._fetch_quota)
                 icons = {"uploaded": "✓", "duplicate": "=", "skipped": "–", "failed": "✗"}
@@ -5761,6 +5762,7 @@ class App(ctk.CTk):
                                 self.uploaded.add(nm)
                                 self._schedule_save_uploaded()
                                 self._schedule_redraw()
+                                self._update_recent_replays()
                             self.after(0, _mark)
                             if status == "uploaded":
                                 self.after(2000, self._fetch_quota)
@@ -6889,9 +6891,10 @@ class App(ctk.CTk):
             saved = build_upload_id_index(
                 api_key, demos_folder=folder,
                 log_fn=lambda m, t=None: self.after(0, self._log, m, t))
-            # Scan done — clear flag, refresh borders
+            # Scan done — clear flag, refresh borders and recent replays
             _BC_SCAN_RUNNING = False
             self.after(0, self._refresh_card_bc_ids)
+            self.after(0, self._update_recent_replays)
         threading.Thread(target=_run, daemon=True).start()
 
     def _refresh_card_bc_ids(self):
@@ -6905,6 +6908,7 @@ class App(ctk.CTk):
                 changed = True
         if changed:
             self._schedule_redraw()
+            self._update_recent_replays()
 
     def _set_card_bc_id(self, filename: str, bc_id: str):
         """Update a single card's bc_id in memory and redraw so the red border clears."""
@@ -6913,6 +6917,7 @@ class App(ctk.CTk):
             if self._cards[idx].get("bc_id") != bc_id:
                 self._cards[idx]["bc_id"] = bc_id
                 self._schedule_redraw()
+                self._update_recent_replays()
 
     def _check_first_run(self):
         api_key = self.config_data.get("api_key", "").strip()
