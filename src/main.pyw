@@ -5557,9 +5557,13 @@ class App(ctk.CTk):
 
     def _launcher_cmd(self) -> str:
         # If the compiled exe exists, register that directly — no Python needed.
+        # Wrap with cmd /c cd /d so the working directory is the app folder,
+        # which lets --runtime-tmpdir="." extract the _MEI folder there instead
+        # of C:\Windows\System32 (the default CWD for registry startup entries).
         exe = BASE_DIR.parent / "BallchasingUploader.exe"
         if exe.exists():
-            return f'"{exe}"'
+            app_dir = str(BASE_DIR.parent)
+            return f'cmd /c "cd /d "{app_dir}" && "{exe}""'
         # Fallback: launch via pythonw when running from source.
         pythonw = Path(sys.executable).with_name("pythonw.exe")
         if not pythonw.exists():
