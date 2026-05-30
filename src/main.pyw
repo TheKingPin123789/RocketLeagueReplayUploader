@@ -6922,8 +6922,7 @@ class App(ctk.CTk):
                 pass
             dlg.destroy()
             self._show_toast("✓ Setup complete — you're ready to go!")
-            self.after(100, self._load_replays)       # scan the now-configured folder
-            self.after(2000, self._bg_build_index)    # populate bc_ids from Ballchasing
+            self.after(100, self._load_replays)    # scan the now-configured folder
 
         ctk.CTkButton(dlg, text="Done — let's go!",
                       command=_confirm).pack(pady=(8, 20))
