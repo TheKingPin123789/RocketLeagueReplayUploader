@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.212"
+VERSION          = "1.4.213"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1979,10 +1979,32 @@ class App(ctk.CTk):
         eff_w    = cw
         view_top = self.canvas.canvasy(0) - buf
         view_bot = self.canvas.canvasy(self.canvas.winfo_height()) + buf
+
+        # Keep info loaded for cards within 2000px of the viewport;
+        # unload everything farther away to cap RAM regardless of folder size.
+        UNLOAD_BUFFER = 2000
         for card in self._active_cards:
             y0, y1 = card["y"], card["y"] + card["height"]
-            if y1 >= view_top and y0 <= view_bot:
-                draw_card(self.canvas, y0, eff_w, card)
+            in_view = y1 >= view_top and y0 <= view_bot
+            near    = y0 >= view_top - UNLOAD_BUFFER and y1 <= view_bot + UNLOAD_BUFFER
+
+            if in_view or near:
+                # Lazy-load info if it was unloaded but cache exists
+                if (card["info"] is None
+                        and not card.get("parsing")
+                        and not card.get("failed")):
+                    info = load_cached(card["filename"])
+                    if info:
+                        card["info"] = info
+                        card["type"] = replay_type(info)
+                if in_view:
+                    draw_card(self.canvas, y0, eff_w, card)
+            else:
+                # Unload info for cards far from the viewport
+                if (card["info"] is not None
+                        and not card.get("parsing")
+                        and not card.get("failed")):
+                    card["info"] = None
 
     def _apply_filters(self, sort=True):
         ftype  = self._filt_type.get()
