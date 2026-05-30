@@ -1,0 +1,200 @@
+BALLCHASING AUTO UPLOADER — CODE REVIEW DOCUMENT
+=================================================
+
+PROJECT OVERVIEW
+----------------
+Ballchasing Auto Uploader is a Windows desktop application that monitors a Rocket
+League replay folder and automatically uploads replays to ballchasing.com. The app
+uses a dual-executable architecture: a frozen PyInstaller launcher (launcher.py
+compiled to BallchasingUploader.exe) that manages version control, and main.pyw,
+a customtkinter-based UI that handles replay parsing, uploading, and display.
+
+
+PROJECT STRUCTURE
+-----------------
+launcher.py
+    Frozen entry point compiled as BallchasingUploader.exe. Never deleted by cleanup
+    flows; called by start.bat. Handles server authentication, version checking, and
+    downloading the plaintext main.pyw script.
+
+src/main.pyw
+    The runtime application script, downloaded and updated from the server at launch.
+    Contains the full UI, replay handling, Ballchasing.com integration, and all
+    background workers. Exec'd directly by launcher.py after version verification.
+
+src/config.json
+    User settings (api_key, demos_folder, visibility, auto_upload, theme, etc.)
+    with built-in corruption recovery. Stores internal state such as auth tokens,
+    local version strings, and feature flags.
+
+src/uploaded.json
+    Set of filenames already uploaded to Ballchasing. Prevents re-uploading on
+    subsequent runs.
+
+src/upload_ids.json
+    Maps replay filename -> ballchasing.com replay UUID. Populated by the BC index
+    scan and by successful uploads. Used to show bc_id status on cards.
+
+src/cache/
+    Parsed replay metadata stored as {filename}.json per replay. Also stores
+    bc_{uuid}.json files with full Ballchasing stats for the detail view.
+    Keyed by CACHE_VERSION (currently 7); bump to invalidate all cached data.
+
+src/lib/
+    Bundled Python packages installed by start.bat on first run (requests, watchdog,
+    customtkinter, Pillow, darkdetect, etc.). Added to sys.path at startup.
+
+src/rattletrap.exe
+    Third-party Rust-based replay parser binary. Downloaded on-demand from the server
+    if missing. Called as a subprocess; reads replay bytes from stdin, outputs JSON.
+
+server.crt
+    Self-signed SSL certificate for HTTPS communication with the app server.
+    Auto-refreshed by launcher.py if expiring within 30 days.
+
+admin/
+    Developer tools: deploy_server.py (deploys to VPS), build_exe.bat (builds the
+    frozen exe), server/ (server-side Flask app source).
+
+
+LAUNCH FLOW
+-----------
+1. start.bat checks the install location, then calls BallchasingUploader.exe if it
+   exists, or falls back to pythonw.exe launcher.py for development/first-run.
+
+2. launcher.py runs in-process. It generates or loads a client UUID, registers with
+   the server (/register), and verifies the token (/verify). The verify response
+   returns the current main.pyw version and launcher version.
+
+3. If main.pyw is missing or outdated, launcher.py downloads it from /code, writes
+   atomically via .tmp-then-rename, updates _local_version in config, then calls
+   launch(). Falls back to the existing file if the server is unreachable.
+
+4. launch() calls _ensure_rattletrap(), _ensure_logo(), _ensure_app_exe(), and
+   _create_shortcut() (config-gated), then exec's main.pyw with __name__ = "__main__".
+
+5. main.pyw initializes the App class, applies config, and schedules ~15 async startup
+   tasks staggered from 150ms to 6s to keep the UI responsive during background work.
+
+Key safeguard: If neither the server nor a local copy of main.pyw is available, the
+user is alerted and the process exits cleanly.
+
+
+UPDATE MECHANISM
+----------------
+Three independent update channels run asynchronously after startup:
+
+main.pyw updates (_check_self_update, t=5s):
+    Calls GET /version to get the current server version. If different from VERSION
+    constant, downloads via POST /code (authenticated), atomically replaces the file,
+    updates config, and restarts the exe.
+
+Exe updates (_check_exe_update, t=2s):
+    Calls GET /version which now returns both app version and launcher_version.
+    Compares launcher_version against _exe_launcher_version (snapshot of
+    _launcher_version from config at __init__, taken before _check_launcher_update
+    can modify it in memory). If outdated, downloads GET /app, saves as
+    BallchasingUploader.new.exe, shows "App update available" button. On click:
+    releases the socket lock, launches new.exe directly from Python (avoids the
+    DLL-load failure that occurs when cmd.exe 'start' is used), then a minimal
+    batch script renames new.exe -> exe after both processes settle.
+
+launcher.py updates (_check_launcher_update, t=4s):
+    Downloads the plaintext launcher.py from POST /launcher if the server reports a
+    newer launcher_version. Takes effect on the next exe rebuild.
+
+
+ARCHITECTURAL PATTERNS
+----------------------
+Canvas-Based Replay Rendering:
+    The replays page uses a single tk.Canvas. Each replay is a draw_card() call at
+    a calculated y-offset using canvas primitives (create_rectangle, create_text).
+    Virtual scrolling: only cards within the viewport + RENDER_BUFFER (800px) are
+    drawn. Lazy loading: card info dicts are unloaded for cards >2000px from the
+    viewport and reloaded from cache as they scroll back into view — keeps RAM flat
+    regardless of library size.
+
+Threading Model:
+    File watching: watchdog Observer in a daemon thread.
+    Parsing: one replay at a time in a background thread (_parse_next / do_work).
+    Network: all HTTP calls in daemon threads.
+    UI updates: all marshalled back via self.after(0, ...).
+    Single-instance: socket bound to 127.0.0.1:47892; second instance exits on bind
+    failure. Socket released before launching the replacement exe on update.
+
+Configuration & Caching:
+    Atomic writes via _atomic_write_json (write .tmp, os.replace to target).
+    _upload_ids_lock (threading.Lock) protects concurrent writes to upload_ids.json.
+    Font objects cached in _font_cache; text pixel widths cached in _text_px_cache
+    to avoid repeated Tcl roundtrips during window resize.
+
+Dedup Strategy:
+    Startup: cache-based — replays with no cache entry are new; queue _check_single_dupe
+    for each. Files deleted while closed trigger _cleanup_orphans (no MD5 hashing).
+    Watcher / bulk download: _check_single_dupe per file as it arrives.
+    Manual: Full Duplicate Scan button in Settings with estimated time in log.
+    Full dedup (MD5): uses chunked 64KB reads to keep RAM flat during hashing.
+
+Low Priority Mode (Settings):
+    After t=6s, binds FocusIn/FocusOut. When app is backgrounded: process set to
+    BELOW_NORMAL_PRIORITY_CLASS. Rattletrap subprocesses set to IDLE_PRIORITY_CLASS
+    so replay parsing never competes with Rocket League for CPU.
+
+
+KEY DESIGN DECISIONS
+--------------------
+Darkdetect Mock:
+    In frozen PyInstaller builds, darkdetect's module-level ctypes argtypes setup
+    crashes libffi-8.dll (STATUS_STACK_BUFFER_OVERRUN). A mock module is injected
+    into sys.modules before customtkinter is imported (only when sys.frozen=True).
+    The app theme is driven by config["theme"] so auto-detection is not needed.
+
+Socket Instead of Mutex for Single-Instance:
+    Earlier ctypes.windll.kernel32 mutex code also triggered the libffi crash.
+    A plain socket bind is crash-safe and equally reliable.
+
+Python 3.12 Exe Build:
+    Python 3.14 (Microsoft Store version) has a broken libffi-8.dll in PyInstaller
+    frozen executables. Exe is built with Python 3.12 + --runtime-tmpdir="." so
+    extraction happens in the app folder (not %TEMP%, which triggers Defender scans).
+    Build command documented in admin/build_exe.bat.
+
+Plaintext Script Distribution:
+    main.pyw is downloaded unencrypted and exec'd. Security relies on server-side
+    authentication (client_id + token). Legacy encrypted main.enc is migrated away
+    on first launch via _migrate_enc().
+
+
+TECHNICAL DEBT & ROUGH EDGES
+-----------------------------
+Darkdetect Crash Workaround:
+    The mock is a fragile patch. If customtkinter's import order changes or darkdetect
+    is imported by another dependency before the mock is injected, the libffi crash
+    could recur. A cleaner fix would be patching darkdetect/_windows_detect.py to
+    guard ctypes calls with getattr(sys, 'frozen', False).
+
+Tight Launcher / Script Coupling:
+    launcher.py stores state in config.json that main.pyw depends on (_auth_token,
+    _local_version, _client_id). Replacing launcher.py manually without updating
+    config may cause verification failures. No version-compatibility checks exist.
+
+Hardcoded Server URLs:
+    Server address (46.101.184.78:8766/8767) is hardcoded in both launcher.py and
+    main.pyw. Moving the server requires redeploying both files.
+
+Broad Exception Swallowing:
+    Several network helpers (_ensure_cert, _ensure_rattletrap, _ensure_logo,
+    _ensure_app_exe) catch bare Exception and return silently. Failed downloads may
+    go unnoticed. Consider logging warnings to surface silent failures.
+
+Concurrent Config Writes:
+    Multiple threads may call save_config or _atomic_write_json concurrently.
+    The tmp-then-rename is filesystem-atomic on NTFS but no mutex protects
+    config.json specifically (only upload_ids.json has _upload_ids_lock). Low risk
+    in practice due to GIL, but worth formalising.
+
+Canvas Rendering at Scale:
+    draw_card() is called for every visible card on every redraw. For 75+ visible
+    cards (compact mode, large monitor), this is ~1500 Tcl canvas item creates per
+    frame. Acceptable now; would need batching or partial updates if card complexity
+    increases significantly.
