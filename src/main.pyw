@@ -76,8 +76,8 @@ def _atomic_write_json(path: Path, data) -> None:
 
 def load_config() -> dict:
     defaults = {"api_key": "", "demos_folder": "", "visibility": "unlisted",
-                "auto_upload": False, "upload_on_detect": True, "launch_with_rl": False,
-                "auto_fetch_bc": True, "theme": "dark"}
+                "auto_upload": False, "upload_on_detect": True, "launch_with_rl": True,
+                "auto_fetch_bc": True, "theme": "dark", "desktop_shortcut": True}
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, encoding="utf-8") as f:
