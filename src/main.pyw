@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.3"
+VERSION          = "1.0.4"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -938,9 +938,10 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
         on_status(name, "skipped"); return
     on_status(name, "uploading")
     wait_for_write(path)
-    # Build a human-readable upload filename from parsed metadata so Ballchasing
-    # shows a proper title instead of the raw UUID filename.
-    upload_name = name
+    # Build a human-readable title from parsed metadata for patching after upload.
+    # Ballchasing ignores the multipart filename — only reads the binary ReplayName —
+    # so we PATCH the title via API after getting the bc_id.
+    upload_title = ""
     cached = load_cached(name)
     if cached:
         rn = (cached.get("replay_name") or "").strip()
@@ -951,13 +952,13 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
             mode_str  = {1: "Duel", 2: "Doubles", 3: "Standard", 4: "Chaos"}.get(ts, "")
             rn = " ".join(p for p in [date_part, type_tag, mode_str] if p)
         if rn:
-            upload_name = f"{rn}.replay"
+            upload_title = rn
     for attempt in range(1, 4):
         try:
             with open(path, "rb") as f:
                 resp = requests.post(UPLOAD_URL,
                     headers={"Authorization": config["api_key"]},
-                    files={"file": (upload_name, f, "application/octet-stream")},
+                    files={"file": (name, f, "application/octet-stream")},
                     data={"visibility": config.get("visibility", "unlisted")},
                     timeout=60)
             if resp.status_code in (201, 409):
@@ -966,6 +967,16 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
                         bc_id = resp.json().get("id", "")
                         if bc_id:
                             on_bc_id(bc_id)
+                            # Patch the title if RL stored a UUID as the ReplayName
+                            if upload_title and resp.status_code == 201:
+                                try:
+                                    requests.patch(
+                                        f"https://ballchasing.com/api/v2/replays/{bc_id}",
+                                        headers={"Authorization": config["api_key"]},
+                                        json={"title": upload_title},
+                                        timeout=10)
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
                 on_status(name, "uploaded" if resp.status_code == 201 else "duplicate"); return
