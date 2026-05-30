@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.208"
+VERSION          = "1.4.209"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -6117,11 +6117,19 @@ class App(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _startup_dedup(self):
-        """Run dedup on startup only if it hasn't run in the last 24 hours.
-        Skipping the MD5 pass saves reading 1-2 GB of replay data on slow drives."""
-        last = self.config_data.get("_last_dedup", 0)
-        if time.time() - last < 86400:   # 24 hours
+        """Run dedup on startup only if the replay count changed since last run.
+        If nothing was added or removed while the app was closed, skip the
+        expensive MD5 pass entirely."""
+        folder = self.config_data.get("demos_folder", "").strip()
+        if not folder or not Path(folder).is_dir():
             return
+        try:
+            current_count = sum(1 for _ in Path(folder).glob("*.replay"))
+        except Exception:
+            return
+        last_count = self.config_data.get("_last_dedup_count", -1)
+        if current_count == last_count:
+            return   # nothing changed while we were closed — skip
         self._dedup(silent=True)
 
     def _dedup(self, folder: str | None = None, silent: bool = False):
@@ -6225,8 +6233,14 @@ class App(ctk.CTk):
             elif not silent:
                 self.after(0, self._log, "[dedup] Nothing to clean up.")
 
-            # Record timestamp so _startup_dedup can skip the next 24 h
-            self.config_data["_last_dedup"] = time.time()
+            # Record replay count so _startup_dedup only runs if files changed
+            try:
+                _fd = self.config_data.get("demos_folder", "").strip()
+                if _fd and Path(_fd).is_dir():
+                    self.config_data["_last_dedup_count"] = sum(
+                        1 for _ in Path(_fd).glob("*.replay"))
+            except Exception:
+                pass
             self.after(0, save_config, self.config_data)
 
             if deleted_replays and self._cards:
