@@ -8,6 +8,9 @@
 ::   pip install pyinstaller  (using py -3.12)
 ::
 :: IMPORTANT: bump LAUNCHER_VERSION in launcher.py before building.
+:: WARNING: never use ctypes.windll.* in launcher.py code that runs at startup
+::          (including _create_shortcut). It triggers a libffi crash in frozen exes.
+::          Use Path.home(), subprocess, or pure Python alternatives instead.
 :: ─────────────────────────────────────────────────────────────────────────────
 
 cd /d "%~dp0.."
