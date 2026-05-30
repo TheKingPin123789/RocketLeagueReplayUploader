@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.4.213"
+VERSION          = "1.4.214"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -127,13 +127,22 @@ def _dims():
     return     dict(card_pad=6, name_h=34, tag_h=0,  meta_h=22, meta2_h=0,  player_h=18, footer_h=6,
                     score_font=20, name_font=12, meta_font=9, tag_font=9, player_font=10)
 
-_font_cache: dict = {}
+_font_cache:    dict = {}
+_text_px_cache: dict = {}   # (text, family, size, weight) → pixel width
 
 def _measure_font(family: str, size: int, weight: str = "normal") -> tkfont.Font:
     key = (family, size, weight)
     if key not in _font_cache:
         _font_cache[key] = tkfont.Font(family=family, size=size, weight=weight)
     return _font_cache[key]
+
+def _measure_px(text: str, family: str, size: int, weight: str = "normal") -> int:
+    """Cached text width measurement — avoids repeated Tcl roundtrips on resize."""
+    key = (text, family, size, weight)
+    v = _text_px_cache.get(key)
+    if v is None:
+        _text_px_cache[key] = v = _measure_font(family, size, weight).measure(text)
+    return v
 
 def _fit_text(text: str, family: str, size: int, weight: str, max_px: int) -> str:
     if max_px <= 0:
@@ -2099,10 +2108,9 @@ class App(ctk.CTk):
             avail = cw - 2 * CARD_MARGIN_X
 
             # minimum width = widest element across all cards (names, players, meta, tags)
-            fn_name   = _measure_font("Segoe UI", d["name_font"], "bold")
-            fn_player = _measure_font("Segoe UI", d["player_font"], "normal")
-            fn_meta   = _measure_font("Segoe UI", d["meta_font"],   "normal")
-            fn_tag    = _measure_font("Segoe UI", d["tag_font"],    "normal")
+            # _measure_px caches every string→pixel result so resize recalcs are fast
+            pf  = "Segoe UI"
+            psz = d["player_font"]; msz = d["meta_font"]; tsz = d["tag_font"]
             PLAYER_OFF = 3 + 4 + 22 + 40  # bar+gap+score+plat prefix in compact player row
             CX_OFF     = 8                 # cx = x0 + 8
             R_PAD      = 6
@@ -2116,7 +2124,7 @@ class App(ctk.CTk):
                 mode_str  = {1:"Duel",2:"Doubles",3:"Standard",4:"Chaos"}.get(ts, f"{ts}v{ts}" if ts else "")
                 tags      = "  ·  ".join(t for t in [type_tag, mode_str] if t)
                 if tags:
-                    max_content_px = max(max_content_px, fn_tag.measure(tags) + CX_OFF + R_PAD)
+                    max_content_px = max(max_content_px, _measure_px(tags, pf, tsz) + CX_OFF + R_PAD)
                 # meta text
                 dur = info.get("duration")
                 dur_str  = f"{int(dur)//60}:{int(dur)%60:02d}" if dur else ""
@@ -2128,11 +2136,11 @@ class App(ctk.CTk):
                 meta2 = f"{date_str}  {time_str} UTC".strip() if time_str else date_str
                 for mt in [meta1, meta2]:
                     if mt:
-                        max_content_px = max(max_content_px, fn_meta.measure(mt) + CX_OFF + R_PAD)
+                        max_content_px = max(max_content_px, _measure_px(mt, pf, msz) + CX_OFF + R_PAD)
                 # player names
                 for p in info.get("players", []):
                     max_content_px = max(max_content_px,
-                                         PLAYER_OFF + fn_player.measure(p["name"]) + R_PAD)
+                                         PLAYER_OFF + _measure_px(p["name"], pf, psz) + R_PAD)
 
             min_w = max(COMPACT_MIN_W, max_content_px)
 
@@ -2259,15 +2267,15 @@ class App(ctk.CTk):
     def _on_canvas_resize(self):
         if self._resize_id is not None:
             self.after_cancel(self._resize_id)
-        self._resize_id = self.after(120, self._do_resize)
+        # Clear immediately so the canvas doesn't show stretched/stale cards
+        # during the drag — a blank canvas is smoother than visual artifacts
+        self.canvas.delete("all")
+        self._resize_id = self.after(200, self._do_resize)
 
     def _do_resize(self):
         self._resize_id = None
-        # Use sort=True so that a canvas resize (e.g. window resize, or the
-        # first-ever pack that triggers a Configure event) never resets
-        # _active_cards to raw mtime order.  The sort key is deterministic so
-        # re-sorting here is safe and cheap.
-        self._apply_filters(sort=True)
+        # sort=False: card order hasn't changed, just column layout needs recalc
+        self._apply_filters(sort=False)
 
     def _toggle_compact(self):
         global _COMPACT
