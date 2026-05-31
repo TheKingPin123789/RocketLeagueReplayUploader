@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.8"
+VERSION          = "1.0.9"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -5617,13 +5617,15 @@ class App(ctk.CTk):
 
     def _launcher_cmd(self) -> str:
         # If the compiled exe exists, register that directly — no Python needed.
-        # Wrap with cmd /c cd /d so the working directory is the app folder,
-        # which lets --runtime-tmpdir="." extract the _MEI folder there instead
-        # of C:\Windows\System32 (the default CWD for registry startup entries).
+        # Use PowerShell hidden launch to set the working directory so
+        # --runtime-tmpdir="." extracts the _MEI folder in the app folder,
+        # not C:\Windows\System32 (the default CWD for registry startup entries).
+        # PowerShell -WindowStyle Hidden means no window ever appears.
         exe = BASE_DIR.parent / "BallchasingUploader.exe"
         if exe.exists():
             app_dir = str(BASE_DIR.parent)
-            return f'cmd /c "cd /d "{app_dir}" && "{exe}""'
+            return (f'powershell -WindowStyle Hidden -Command '
+                    f'"Start-Process \'{exe}\' -WorkingDirectory \'{app_dir}\'"')
         # Fallback: launch via pythonw when running from source.
         pythonw = Path(sys.executable).with_name("pythonw.exe")
         if not pythonw.exists():
