@@ -1035,9 +1035,12 @@ class _Tooltip:
         self._delay   = delay
         self._after   = None
         self._tip_win = None
-        widget.bind('<Enter>',  self._on_enter, add='+')
-        widget.bind('<Leave>',  self._on_leave, add='+')
-        widget.bind('<Button>', self._on_leave, add='+')
+        try:
+            widget.bind('<Enter>',  self._on_enter, add='+')
+            widget.bind('<Leave>',  self._on_leave, add='+')
+            widget.bind('<Button>', self._on_leave, add='+')
+        except Exception:
+            pass  # some CTk widgets (e.g. CTkSegmentedButton) do not support bind
 
     def _on_enter(self, _e=None):
         self._after = self._widget.after(self._delay, self._show)
