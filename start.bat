@@ -1,32 +1,45 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 title Ballchasing Uploader
 
-:: ── Location check ─────────────────────────────────────────────────────────────
-echo "%~dp0" | findstr /i "\\Downloads\\" >nul
-if not errorlevel 1 goto :wrong_location
-echo "%~dp0" | findstr /i "\\Desktop\\" >nul
-if not errorlevel 1 goto :wrong_location
+:: ── Determine install directory ───────────────────────────────────────────────
+:: If running from Downloads or Desktop → auto-create folder in user profile
+:: Otherwise → create a BallchasingUploader subfolder where start.bat is
+
+set "SRC=%~dp0"
+
+echo "%SRC%" | findstr /i "\\Downloads\\" >nul
+if not errorlevel 1 goto :pick_default_dir
+echo "%SRC%" | findstr /i "\\Desktop\\" >nul
+if not errorlevel 1 goto :pick_default_dir
+
+:: Normal location — install in a BallchasingUploader subfolder here
+:: (skip subfolder if start.bat is already inside a BallchasingUploader folder)
+echo "%SRC%" | findstr /i "\\BallchasingUploader\\" >nul
+if not errorlevel 1 (
+    set "INSTALL=%SRC%"
+    goto :launch_or_setup
+)
+set "INSTALL=%SRC%BallchasingUploader\"
+if not exist "%INSTALL%" mkdir "%INSTALL%"
 goto :launch_or_setup
 
-:wrong_location
-echo.
-echo  [!]  Do not run this from your Downloads folder or Desktop.
-echo.
-echo  Please do this first:
-echo    1. Create a permanent folder, e.g.  C:\BallchasingUploader
-echo    2. Move start.bat into that folder
-echo    3. Run start.bat from there
-echo.
-echo  This keeps all app files together in one place.
-echo.
-pause
-exit /b
+:pick_default_dir
+set "INSTALL=%USERPROFILE%\BallchasingUploader\"
+if not exist "%INSTALL%" (
+    echo.
+    echo  [i]  Creating install folder at:
+    echo       %INSTALL%
+    mkdir "%INSTALL%"
+    echo.
+)
+:: Copy start.bat to the install folder so future launches work from there
+if not exist "%INSTALL%start.bat" copy /y "%~f0" "%INSTALL%start.bat" >nul
 
 :launch_or_setup
 :: ── If already installed, run the exe directly ────────────────────────────────
-if exist "%~dp0BallchasingUploader.exe" (
-    start "" "%~dp0BallchasingUploader.exe"
+if exist "%INSTALL%BallchasingUploader.exe" (
+    start "" "%INSTALL%BallchasingUploader.exe"
     exit
 )
 
@@ -34,6 +47,8 @@ if exist "%~dp0BallchasingUploader.exe" (
 echo =============================================
 echo   Ballchasing Uploader - First Time Setup
 echo =============================================
+echo.
+echo  Install location: %INSTALL%
 echo.
 
 :: ── Python check ──────────────────────────────────────────────────────────────
@@ -49,9 +64,9 @@ if errorlevel 1 (
 )
 
 :: ── Python dependencies ───────────────────────────────────────────────────────
-if not exist "%~dp0src\lib\" (
+if not exist "%INSTALL%src\lib\" (
     echo Installing dependencies...
-    pip install requests customtkinter pillow watchdog -q --target "%~dp0src\lib"
+    pip install requests customtkinter pillow watchdog -q --target "%INSTALL%src\lib"
     if errorlevel 1 (
         echo Failed to install dependencies.
         pause
@@ -62,17 +77,17 @@ if not exist "%~dp0src\lib\" (
 )
 
 :: ── Download uninstaller ───────────────────────────────────────────────────────
-if not exist "%~dp0uninstall.bat" (
+if not exist "%INSTALL%uninstall.bat" (
     powershell -NoProfile -Command ^
-        "try { Invoke-WebRequest 'http://46.101.184.78:8766/uninstall' -OutFile '%~dp0uninstall.bat' -UseBasicParsing; Unblock-File '%~dp0uninstall.bat' } catch { Write-Host 'Could not download uninstaller.' }"
+        "try { Invoke-WebRequest 'http://46.101.184.78:8766/uninstall' -OutFile '%INSTALL%uninstall.bat' -UseBasicParsing; Unblock-File '%INSTALL%uninstall.bat' } catch { Write-Host 'Could not download uninstaller.' }"
 )
 
 :: ── Download launcher from server ─────────────────────────────────────────────
-if not exist "%~dp0launcher.py" (
+if not exist "%INSTALL%launcher.py" (
     echo Downloading launcher...
     powershell -NoProfile -Command ^
-        "try { Invoke-WebRequest 'http://46.101.184.78:8766/launcher' -OutFile '%~dp0launcher.py' -UseBasicParsing } catch { exit 1 }"
-    if not exist "%~dp0launcher.py" (
+        "try { Invoke-WebRequest 'http://46.101.184.78:8766/launcher' -OutFile '%INSTALL%launcher.py' -UseBasicParsing } catch { exit 1 }"
+    if not exist "%INSTALL%launcher.py" (
         echo Failed to download launcher. Check your internet connection.
         pause
         exit /b
@@ -86,8 +101,8 @@ echo Downloading app files...
 for /f "delims=" %%P in ('python -c "import sys,os; print(os.path.join(os.path.dirname(sys.executable),'pythonw.exe'))"') do set PYTHONW=%%P
 
 if exist "%PYTHONW%" (
-    start "" "%PYTHONW%" "%~dp0launcher.py"
+    start "" "%PYTHONW%" "%INSTALL%launcher.py"
 ) else (
-    start "" python "%~dp0launcher.py"
+    start "" python "%INSTALL%launcher.py"
 )
 exit
