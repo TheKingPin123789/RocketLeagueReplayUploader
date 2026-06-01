@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.9"
+VERSION          = "1.0.10"
 APP_SERVER       = "http://46.101.184.78:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1634,7 +1634,6 @@ class App(ctk.CTk):
         self.after(150, self._apply_canvas_theme)
         self.after(200, self._check_integrity)
         self.after(300, self._fetch_quota)
-        self.after(500, self._send_ping)
         self.after(4000, self._check_launcher_update)
         self.after(5000, self._check_self_update)
         self.after(2000, self._check_exe_update)
@@ -7193,21 +7192,6 @@ class App(ctk.CTk):
 
 
     # ── 17. Update mechanism — ping, self-update, launcher/exe update ─────────
-
-    def _send_ping(self):
-        def worker():
-            try:
-                import datetime
-                requests.post(
-                    "http://46.101.184.78:8765/ping",
-                    json={
-                        "version": VERSION,
-                        "time":    datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
-                    },
-                    timeout=5)
-            except Exception:
-                pass
-        threading.Thread(target=worker, daemon=True).start()
 
     def _check_self_update(self):
         """Check if the server has a newer main.pyw and auto-update + restart.
