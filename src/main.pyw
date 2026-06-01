@@ -1029,7 +1029,7 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
 
 class _Tooltip:
     """Shows a tooltip after the mouse hovers over a widget for 3 seconds."""
-    def __init__(self, widget, text: str, delay: int = 3000):
+    def __init__(self, widget, text: str, delay: int = 2000):
         self._widget  = widget
         self._text    = text
         self._delay   = delay
