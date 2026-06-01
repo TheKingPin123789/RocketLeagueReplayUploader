@@ -96,6 +96,37 @@ def save_config(cfg: dict) -> None:
 ctk.set_appearance_mode(load_config().get("theme", "dark"))
 ctk.set_default_color_theme("blue")
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TABLE OF CONTENTS
+# ══════════════════════════════════════════════════════════════════════════════
+#   1. Constants & globals               line  128
+#   2. Config / persistence helpers      line  287
+#   3. Ballchasing API helpers           line  323
+#   4. Map / platform / utility helpers  line  590
+#   5. Replay parsing (rattletrap)       line  827
+#   6. Upload helpers & file watcher     line  957
+#   7. Card drawing                      line 1034
+#   8. DateRangePicker widget            line 1342
+#   9. App class — __init__ & startup    line 1553
+#  10. App class — UI pages              line 1653
+#        header, main, replays, detail, settings, page switching
+#  11. App class — Canvas & card mgmt   line 2018
+#        filters, positions, resize, compact toggle
+#  12. App class — Background workers   line 2366
+#        load/parse, bg cache, canvas clicks, detail fetch
+#  13. App class — Dedup & orphan cleanup line 6109
+#  14. App class — Upload & watcher     line 5777
+#        watcher, bulk download, toast, retry
+#  15. App class — Ballchasing integ.   line 6784
+#        quota fetch, bc_id index scan, first-run setup
+#  16. App class — Settings & system    line 5312
+#        settings actions, startup, RL watcher, priority
+#  17. App class — Update mechanism     line 7195
+#  18. Entry point                      line 7399
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. Constants & globals ───────────────────────────────────────────────────
+
 CACHE_VERSION  = 7      # bump to invalidate all header caches
 RENDER_BUFFER    = 800   # px above/below viewport to pre-render (hides load pop-in while scrolling)
 CARD_MARGIN_X    = 10    # left/right margin
@@ -157,7 +188,7 @@ def _fit_text(text: str, family: str, size: int, weight: str, max_px: int) -> st
             return text + "…"
     return ""
 
-# All colours defined as (light, dark) tuples.
+# ── colour constants (light/dark tuples) ─────────────────────────────────────
 # CTk widgets accept tuples directly; use _c() for canvas/tk drawing.
 C_BG          = ("#E4E4E4", "#272727")
 C_CARD        = ("#EFEFEF", "#1D1D1F")
@@ -253,7 +284,7 @@ def replay_type(info: dict) -> str:
     return "Online"
 
 
-# ── persistence ───────────────────────────────────────────────────────────────
+# ── 2. Config / persistence helpers ──────────────────────────────────────────
 
 def load_uploaded() -> set:
     if UPLOADED_FILE.exists():
@@ -288,6 +319,8 @@ def save_upload_id(filename: str, bc_id: str) -> None:
         ids[filename] = bc_id
         _atomic_write_json(UPLOAD_IDS_FILE, ids)
 
+
+# ── 3. Ballchasing API helpers ────────────────────────────────────────────────
 
 def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> int:
     """Fetch the user's replay list from Ballchasing and populate upload_ids.json
@@ -554,6 +587,8 @@ def lookup_bc_id(rl_id: str, api_key: str, _log=None) -> str:
     return ""
 
 
+# ── 4. Map / platform / utility helpers ──────────────────────────────────────
+
 MAP_NAMES: dict[str, str] = {
     # ── DFH Stadium ───────────────────────────────────────────────────────────
     "stadium_p":                        "DFH Stadium",
@@ -789,7 +824,7 @@ def save_cache(name: str, info: dict) -> None:
     CACHE_DIR.mkdir(exist_ok=True)
     _atomic_write_json(CACHE_DIR / (name + ".json"), {**info, "_v": CACHE_VERSION})
 
-# ── rrrocket parsers ──────────────────────────────────────────────────────────
+# ── 5. Replay parsing (rattletrap / rrrocket) ────────────────────────────────
 
 def _extract_playlist_id(props: dict, replay: dict) -> int:
     pid = int(props.get("PlaylistId") or props.get("Playlist") or 0)
@@ -919,7 +954,7 @@ def parse_card_data(path: Path) -> dict | None:
         return None
 
 
-# ── uploader ──────────────────────────────────────────────────────────────────
+# ── 6. Upload helpers & file watcher ─────────────────────────────────────────
 
 def wait_for_write(path: Path, timeout: int = 30) -> None:
     prev, deadline = -1, time.time() + timeout
@@ -996,7 +1031,7 @@ class ReplayHandler(FileSystemEventHandler):
             self.on_new_replay(Path(event.src_path).name)
 
 
-# ── card helpers ──────────────────────────────────────────────────────────────
+# ── 7. Card drawing (card_height, draw_card, _dims, colours) ─────────────────
 
 def card_height(info: dict | None) -> int:
     d = _dims()
@@ -1304,7 +1339,7 @@ def draw_card(canvas: tk.Canvas, y: int, w: int, entry: dict) -> None:
                                    anchor="e", fill=cc["orange"], font=("Segoe UI", d["player_font"]))
 
 
-# ── Date range picker ────────────────────────────────────────────────────────
+# ── 8. DateRangePicker widget ────────────────────────────────────────────────
 
 class DateRangePicker(tk.Toplevel):
     _BG      = "#1a1a1a"
@@ -1489,7 +1524,7 @@ class DateRangePicker(tk.Toplevel):
         self._on_apply()
 
 
-# ── Win32 icon helper ─────────────────────────────────────────────────────────
+# ── Win32 icon helper (used by App.__init__) ─────────────────────────────────
 
 def _set_win32_icon(hwnd: int, ico_path: str):
     """Load ICO at exact sizes via LoadImage and set both ICON_SMALL/ICON_BIG."""
@@ -1515,7 +1550,7 @@ def _set_win32_icon(hwnd: int, ico_path: str):
         pass
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
+# ── 9. App class ─────────────────────────────────────────────────────────────
 
 class App(ctk.CTk):
     def __init__(self):
@@ -1615,7 +1650,7 @@ class App(ctk.CTk):
             self._rl_poll_thread_running = True
             threading.Thread(target=self._rl_poll_loop, daemon=True).start()
 
-    # ── header ────────────────────────────────────────────────────────────────
+    # ── 10. UI pages — header ─────────────────────────────────────────────────
 
     def _build_header(self):
         hdr = ctk.CTkFrame(self, fg_color="transparent")
@@ -1650,7 +1685,7 @@ class App(ctk.CTk):
                      font=ctk.CTkFont(size=13),
                      text_color="gray50").pack(side="left", padx=(6, 0))
 
-    # ── main page ─────────────────────────────────────────────────────────────
+    # ── UI pages — main page ──────────────────────────────────────────────────
 
     def _build_main_page(self):
         self.main_page = ctk.CTkFrame(self, fg_color="transparent")
@@ -1760,7 +1795,7 @@ class App(ctk.CTk):
             draw_card(canvas, y, w, tmp)
             y += tmp["height"] + pad
 
-    # ── replays page ──────────────────────────────────────────────────────────
+    # ── UI pages — replays page ───────────────────────────────────────────────
 
     def _build_replays_page(self):
         self.replays_page  = ctk.CTkFrame(self, fg_color="transparent")
@@ -1979,6 +2014,8 @@ class App(ctk.CTk):
             self._stats_toggle_btn.configure(text="← Replays", fg_color=("#d0d0d0", "#2a2a2a"))
             self._stats_visible = True
             self._run_me_search()
+
+    # ── 11. Canvas & card management — scroll, redraw, filter, layout ─────────
 
     def _canvas_yview(self, *args):
         self.canvas.yview(*args)
@@ -2326,7 +2363,7 @@ class App(ctk.CTk):
             card["height"] = card_height(card.get("info"))
         self._apply_filters()
 
-    # ── load + parse ──────────────────────────────────────────────────────────
+    # ── 12. Background workers — load, parse, card lifecycle ─────────────────
 
     def _add_detected_card(self, filename: str, folder: str):
         """Add a watchdog-detected replay to _cards so Recent Replays updates."""
@@ -2538,7 +2575,7 @@ class App(ctk.CTk):
             else:
                 self.after(150, self._parse_next, gen)  # rest: ~6/s
 
-    # ── startup background cache ──────────────────────────────────────────────
+    # ── background workers — startup cache (parse all uncached replays) ───────
 
     def _bg_cache_replays(self):
         if self._bg_cache_busy:
@@ -2581,7 +2618,7 @@ class App(ctk.CTk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ── canvas click ──────────────────────────────────────────────────────────
+    # ── canvas click handlers (recent strip + main canvas + right-click) ──────
 
     def _on_recent_click(self, event):
         for y0, y1, card in getattr(self, '_recent_hit_rects', []):
@@ -2645,7 +2682,7 @@ class App(ctk.CTk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ── detail page ───────────────────────────────────────────────────────────
+    # ── UI pages — detail page ────────────────────────────────────────────────
 
     def _build_detail_page(self):
         self.detail_page  = ctk.CTkFrame(self, fg_color="transparent")
@@ -3197,7 +3234,7 @@ class App(ctk.CTk):
                      text_color=HDR_COLOR, font=ctk.CTkFont(size=11)
                      ).pack(pady=(6, 0))
 
-    # ── detail action buttons ─────────────────────────────────────────────────
+    # ── UI pages — detail action buttons ─────────────────────────────────────
 
     def _open_on_ballchasing(self):
         card = self._current_card
@@ -3837,7 +3874,7 @@ class App(ctk.CTk):
                      anchor="w").pack(fill="x", pady=(4, 2))
         self._build_stats_table_canvas(self.stats_content, filtered)
 
-    # ── win/loss history graph ─────────────────────────────────────────────────
+    # ── player stats — win/loss history graph ────────────────────────────────
     def _build_stats_graph(self, parent, games, period_var):
         C_WIN  = "#4aaa88"
         C_LOSS = "#e06060"
@@ -4014,7 +4051,7 @@ class App(ctk.CTk):
         cv.bind("<Configure>", draw)
         period_var.trace_add("write", lambda *_: draw())
 
-    # ── virtual-scroll game table ──────────────────────────────────────────────
+    # ── player stats — virtual-scroll per-game table ─────────────────────────
     def _build_stats_table_canvas(self, parent, games):
         ROW_H  = 26
         HDR_H  = 28
@@ -4149,7 +4186,7 @@ class App(ctk.CTk):
         rows_cv.bind("<Button-5>",
                      lambda e: (rows_cv.yview_scroll( 1, "units"), draw_rows()))
 
-    # ── settings page ─────────────────────────────────────────────────────────
+    # ── UI pages — settings page ──────────────────────────────────────────────
 
     def _build_settings_page(self):
         self.settings_page = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -4347,7 +4384,7 @@ class App(ctk.CTk):
                             padx=20, pady=(0, 10), sticky="w")
 
 
-    # ── page switching ────────────────────────────────────────────────────────
+    # ── UI pages — page switching ─────────────────────────────────────────────
 
     def _show_main(self):
         self.settings_page.pack_forget()
@@ -5272,7 +5309,7 @@ class App(ctk.CTk):
         else:
             self._show_main()
 
-    # ── settings actions ──────────────────────────────────────────────────────
+    # ── 16. Settings actions & system integration ─────────────────────────────
 
     def _toggle_key_visibility(self):
         self.api_entry.configure(show="" if self.api_entry.cget("show") == "•" else "•")
@@ -5610,7 +5647,7 @@ class App(ctk.CTk):
             self._save_btn.configure(fg_color="#2d7a4f")
             self.after(1200, lambda: self._save_btn.configure(fg_color=["#3B8ED0", "#1F6AA5"]))
 
-    # ── startup / RL watcher helpers ──────────────────────────────────────────
+    # ── settings — startup / registry / RL watcher helpers ───────────────────
 
     _REG_RUN = r"Software\Microsoft\Windows\CurrentVersion\Run"
     _APP_KEY  = "BallchasingUploader"
@@ -5737,7 +5774,7 @@ class App(ctk.CTk):
             was_running = now
             time.sleep(5)
 
-    # ── watcher ───────────────────────────────────────────────────────────────
+    # ── 14. Upload & watcher — toggle, start, stop ───────────────────────────
 
     def _toggle_watching(self):
         if self.observer and self.observer.is_alive():
@@ -5907,7 +5944,7 @@ class App(ctk.CTk):
         self._set_status(False)
         self._log("Stopped watching.")
 
-    # ── bulk download ─────────────────────────────────────────────────────────
+    # ── upload & watcher — bulk download from Ballchasing ────────────────────
 
     def _ask_download_limit(self) -> int | None:
         """Modal dialog — returns limit (0 = all) or None if cancelled."""
@@ -6068,6 +6105,8 @@ class App(ctk.CTk):
 
 
         self._start_bulk_download(api_key, folder, total)
+
+    # ── 13. Dedup & orphan cleanup ────────────────────────────────────────────
 
     def _cleanup_orphans(self, folder: str | None = None):
         """Fast background sweep: remove cache/upload entries with no matching replay.
@@ -6742,6 +6781,8 @@ class App(ctk.CTk):
             # Orphan cleanup only — duplicate checks ran per-file during download
             self.after(0, self._cleanup_orphans)
 
+    # ── 15. Ballchasing integration — quota, bc_id index scan ────────────────
+
     def _fetch_quota(self):
         api_key = self.config_data.get("api_key", "").strip()
         if not api_key:
@@ -6795,7 +6836,7 @@ class App(ctk.CTk):
             self._save_uploaded_id = None
         save_uploaded(self.uploaded)
 
-    # ── toast notification ────────────────────────────────────────────────────
+    # ── upload & watcher — toast notification ────────────────────────────────
 
     def _show_toast(self, message: str, duration_ms: int = 5000):
         """Show a silent, auto-dismissing notification at the bottom-right of the screen."""
@@ -6834,7 +6875,7 @@ class App(ctk.CTk):
         except Exception:
             pass
 
-    # ── retry failed uploads ──────────────────────────────────────────────────
+    # ── upload & watcher — retry failed uploads ───────────────────────────────
 
     def _retry_upload(self, path: Path, filename: str):
         """Retry an upload that previously failed. Called on a 5-minute timer."""
@@ -6887,7 +6928,7 @@ class App(ctk.CTk):
                                       self.after(0, self._set_card_bc_id, fn, bc_id))),
             daemon=True).start()
 
-    # ── right-click context menu on replay cards ──────────────────────────────
+    # ── canvas click handlers — right-click context menu ─────────────────────
 
     def _on_canvas_right_click(self, event):
         cy = self.canvas.canvasy(event.y)
@@ -6921,7 +6962,7 @@ class App(ctk.CTk):
                     menu.grab_release()
                 return
 
-    # ── first-run setup guide ─────────────────────────────────────────────────
+    # ── Ballchasing integration — bc_id index scan & first-run setup ─────────
 
     def _bg_build_index(self):
         """Background: fetch user's BC replay list and populate upload_ids.json.
@@ -7136,7 +7177,7 @@ class App(ctk.CTk):
             self._dot_anim_id = self.after(600, _tick)
         _tick()
 
-    # ── log ───────────────────────────────────────────────────────────────────
+    # ── UI utility — log textbox helper ──────────────────────────────────────
 
     def _log(self, message: str, tag: str = None):
         self.log_box.configure(state="normal")
@@ -7151,7 +7192,7 @@ class App(ctk.CTk):
         self.log_box.configure(state="disabled")
 
 
-    # ── update check ─────────────────────────────────────────────────────────
+    # ── 17. Update mechanism — ping, self-update, launcher/exe update ─────────
 
     def _send_ping(self):
         def worker():
@@ -7336,7 +7377,7 @@ class App(ctk.CTk):
                          creationflags=subprocess.CREATE_NO_WINDOW)
         self.destroy()
 
-    # ── integrity check ───────────────────────────────────────────────────────
+    # ── update mechanism — startup integrity check ────────────────────────────
 
     def _check_integrity(self):
         issues = []
@@ -7354,6 +7395,8 @@ class App(ctk.CTk):
         self._stop_watching()
         self.destroy()
 
+
+# ── 18. Entry point ──────────────────────────────────────────────────────────
 
 def _check_dependencies() -> list[str]:
     missing = []
