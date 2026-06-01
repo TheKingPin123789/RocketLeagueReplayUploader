@@ -29,8 +29,8 @@ CERT_FILE       = BASE / "server.crt"
 RATTLETRAP_FILE = BASE / "src" / "rattletrap.exe"
 LOGO_FILE       = BASE / "src" / "logo.ico"
 APP_EXE_FILE    = BASE / "BallchasingUploader.exe"
-SERVER_HTTP  = "http://46.101.184.78:8766"
-SERVER_HTTPS = "https://46.101.184.78:8767"
+SERVER_HTTP  = "http://ballchasingautouploader.com:8766"
+SERVER_HTTPS = "https://ballchasingautouploader.com:8767"
 LAUNCHER_VERSION = "1.0"
 
 # ── certificate management ────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ def main():
             else:
                 alert("Registration Failed",
                       f"Could not register with the server ({r.status_code}).\n"
-                      "Please visit http://46.101.184.78 to download the app.")
+                      "Please visit http://ballchasingautouploader.com to download the app.")
                 sys.exit(1)
         except requests.RequestException:
             if not SCRIPT.exists():

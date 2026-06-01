@@ -59,8 +59,8 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.10"
-APP_SERVER       = "http://46.101.184.78:8766"
+VERSION          = "1.0.11"
+APP_SERVER       = "http://ballchasingautouploader.com:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
     """Write JSON to a temp file then atomically rename — safe against mid-write crashes."""
@@ -1743,7 +1743,7 @@ class App(ctk.CTk):
                                  font=ctk.CTkFont(size=11),
                                  text_color="gray45", cursor="hand2", anchor="e")
         site_link.pack(fill="x", padx=20, pady=(0, 10))
-        site_link.bind("<Button-1>", lambda _: webbrowser.open("http://46.101.184.78"))
+        site_link.bind("<Button-1>", lambda _: webbrowser.open("http://ballchasingautouploader.com"))
 
     def _update_recent_replays(self):
         if not hasattr(self, '_recent_canvas'):
