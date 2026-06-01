@@ -134,7 +134,7 @@ def ensure_ssl():
     subprocess.run([
         "openssl", "req", "-x509", "-newkey", "rsa:2048",
         "-keyout", str(KEY_FILE), "-out", str(CERT_FILE),
-        "-days", "3650", "-nodes", "-subj", "/CN=46.101.184.78"
+        "-days", "3650", "-nodes", "-subj", "/CN=ballchasingautouploader.com"
     ], check=True, capture_output=True)
     print("Certificate generated.")
 
@@ -459,20 +459,20 @@ def verify():
 
     if hashed not in users:
         log("verify", "unregistered", ip=ip, level="warn")
-            return jsonify({"status": "unregistered"}), 403
+        return jsonify({"status": "unregistered"}), 403
 
     user = users[hashed]
 
     if not verify_token(client_id, token):
         log("verify", "invalid token", ip=ip, level="warn")
-            return jsonify({"status": "invalid_token"}), 403
+        return jsonify({"status": "invalid_token"}), 403
 
     tier   = user.get("tier", "free_tester")
     expiry = user.get("expiry")
 
     if tier == "revoked":
         log("verify", "revoked", ip=ip, level="warn")
-            return jsonify({"status": "revoked"}), 403
+        return jsonify({"status": "revoked"}), 403
 
     users[hashed]["last_seen"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     users[hashed]["ip"] = ip
