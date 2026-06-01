@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.12"
+VERSION          = "1.0.13"
 APP_SERVER       = "http://ballchasingautouploader.com:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -1025,6 +1025,48 @@ def upload(path: Path, config: dict, uploaded: set, on_status, force=False, on_b
         if attempt < 3: time.sleep(5 * attempt)
     on_status(name, "failed")
 
+
+
+class _Tooltip:
+    """Shows a tooltip after the mouse hovers over a widget for 3 seconds."""
+    def __init__(self, widget, text: str, delay: int = 3000):
+        self._widget  = widget
+        self._text    = text
+        self._delay   = delay
+        self._after   = None
+        self._tip_win = None
+        widget.bind('<Enter>',  self._on_enter, add='+')
+        widget.bind('<Leave>',  self._on_leave, add='+')
+        widget.bind('<Button>', self._on_leave, add='+')
+
+    def _on_enter(self, _e=None):
+        self._after = self._widget.after(self._delay, self._show)
+
+    def _on_leave(self, _e=None):
+        if self._after:
+            self._widget.after_cancel(self._after)
+            self._after = None
+        self._hide()
+
+    def _show(self):
+        if self._tip_win:
+            return
+        x = self._widget.winfo_rootx() + 20
+        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 4
+        self._tip_win = tw = tk.Toplevel(self._widget)
+        tw.wm_overrideredirect(True)
+        tw.attributes('-topmost', True)
+        tw.geometry(f'+{x}+{y}')
+        bg = '#1D1D1F'
+        tk.Frame(tw, bg='#2C2C2E', bd=1).pack(fill='both', expand=True)
+        tk.Label(tw, text=self._text, bg=bg, fg='#e0e0e0',
+                 font=('Segoe UI', 11), wraplength=280, justify='left',
+                 padx=10, pady=7).pack()
+
+    def _hide(self):
+        if self._tip_win:
+            self._tip_win.destroy()
+            self._tip_win = None
 
 class ReplayHandler(FileSystemEventHandler):
     def __init__(self, on_new_replay):
@@ -4232,9 +4274,14 @@ class App(ctk.CTk):
                                       placeholder_text="Paste your upload token")
         self.api_entry.grid(row=2, column=1, padx=8, pady=8, sticky="ew")
         self.api_entry.insert(0, self.config_data.get("api_key", ""))
-        ctk.CTkButton(pg, text="Show", width=65,
+        api_btns = ctk.CTkFrame(pg, fg_color="transparent")
+        api_btns.grid(row=2, column=2, padx=(0, 20))
+        ctk.CTkButton(api_btns, text="Show", width=65,
                       command=self._toggle_key_visibility
-                      ).grid(row=2, column=2, padx=(0, 20))
+                      ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(api_btns, text="Get API Key", width=90,
+                      command=lambda: webbrowser.open("https://ballchasing.com/upload")
+                      ).pack(side="left")
 
         _lbl(3, "Main Demos Folder")
         self.folder_entry = ctk.CTkEntry(pg,
@@ -4372,7 +4419,7 @@ class App(ctk.CTk):
                       command=self._confirm_download
                       ).grid(row=18, column=0, columnspan=3,
                              padx=20, pady=(8, 2), sticky="w")
-        ctk.CTkLabel(pg, text="Fetch replays from your Ballchasing account into the local cache.",
+        ctk.CTkLabel(pg, text="Fetch replays from your Ballchasing account into the local cache, from newest to oldest.",
                      font=ctk.CTkFont(size=11), text_color=C_DIM, anchor="w"
                      ).grid(row=19, column=0, columnspan=3,
                             padx=20, pady=(0, 10), sticky="w")
@@ -4381,11 +4428,39 @@ class App(ctk.CTk):
                       command=self._run_manual_dedup
                       ).grid(row=20, column=0, columnspan=3,
                              padx=20, pady=(8, 2), sticky="w")
-        ctk.CTkLabel(pg, text="MD5-hash every replay to find exact duplicates. Use when you suspect missed duplicates.",
+        ctk.CTkLabel(pg, text="Scans every replay file to catch any duplicates the automatic check may have missed.",
                      font=ctk.CTkFont(size=11), text_color=C_DIM, anchor="w"
                      ).grid(row=21, column=0, columnspan=3,
                             padx=20, pady=(0, 10), sticky="w")
 
+        # ── Tooltips (3-second hover) ─────────────────────────────
+        _T = _Tooltip
+        _T(self.api_entry,
+           "Your personal Ballchasing API key. Get it from ballchasing.com → Profile → API key")
+        _T(self.folder_entry,
+           "The folder where Rocket League saves your replay files (.replay)")
+        _T(self.sync_entry,
+           "Optional — replays found here are automatically moved to your main folder")
+        for w in pg.grid_slaves(row=5, column=1):
+            _T(w, "How uploaded replays appear on Ballchasing: Unlisted (link only), Public, or Private")
+        for w in pg.grid_slaves(row=7, column=1):
+            _T(w, "Automatically upload new replays to Ballchasing as soon as they're saved")
+        for w in pg.grid_slaves(row=8, column=1):
+            _T(w, "Launch the app automatically when your PC starts")
+        for w in pg.grid_slaves(row=9, column=1):
+            _T(w, "Create a shortcut on your desktop for quick access")
+        for w in pg.grid_slaves(row=10, column=1):
+            _T(w, "Start watching for new replays automatically when Rocket League is running")
+        for w in pg.grid_slaves(row=11, column=1):
+            _T(w, "Automatically fetch detailed stats from Ballchasing when you open a replay")
+        for w in pg.grid_slaves(row=12, column=1):
+            _T(w, "Reduces the app's CPU priority so Rocket League always gets resources first — recommended for lower-end PCs")
+        for w in pg.grid_slaves(row=13, column=1):
+            _T(w, "Automatically delete the oldest replays when the folder exceeds this number. Set to 0 to disable")
+        for w in pg.grid_slaves(row=15, column=1):
+            _T(w, "Switch between dark, light, or match your Windows system theme")
+        for w in pg.grid_slaves(row=16, column=1):
+            _T(w, "Customise the colours used throughout the app")
 
     # ── UI pages — page switching ─────────────────────────────────────────────
 
