@@ -79,14 +79,14 @@ if not exist "%INSTALL%src\lib\" (
 :: ── Download uninstaller ───────────────────────────────────────────────────────
 if not exist "%INSTALL%uninstall.bat" (
     powershell -NoProfile -Command ^
-        "try { Invoke-WebRequest 'http://46.101.184.78:8766/uninstall' -OutFile '%INSTALL%uninstall.bat' -UseBasicParsing; Unblock-File '%INSTALL%uninstall.bat' } catch { Write-Host 'Could not download uninstaller.' }"
+        "try { Invoke-WebRequest 'http://ballchasingautouploader.com:8766/uninstall' -OutFile '%INSTALL%uninstall.bat' -UseBasicParsing; Unblock-File '%INSTALL%uninstall.bat' } catch { Write-Host 'Could not download uninstaller.' }"
 )
 
 :: ── Download launcher from server ─────────────────────────────────────────────
 if not exist "%INSTALL%launcher.py" (
     echo Downloading launcher...
     powershell -NoProfile -Command ^
-        "try { Invoke-WebRequest 'http://46.101.184.78:8766/launcher' -OutFile '%INSTALL%launcher.py' -UseBasicParsing } catch { exit 1 }"
+        "try { Invoke-WebRequest 'http://ballchasingautouploader.com:8766/launcher' -OutFile '%INSTALL%launcher.py' -UseBasicParsing } catch { exit 1 }"
     if not exist "%INSTALL%launcher.py" (
         echo Failed to download launcher. Check your internet connection.
         pause
