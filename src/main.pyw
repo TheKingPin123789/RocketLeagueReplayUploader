@@ -59,7 +59,7 @@ UPLOADED_FILE = BASE_DIR / "uploaded.json"
 UPLOAD_URL    = "https://ballchasing.com/api/v2/upload"
 CACHE_DIR     = BASE_DIR / "cache"
 RATTLETRAP    = BASE_DIR / "rattletrap.exe"
-VERSION          = "1.0.11"
+VERSION          = "1.0.12"
 APP_SERVER       = "http://ballchasingautouploader.com:8766"
 
 def _atomic_write_json(path: Path, data) -> None:
@@ -334,8 +334,12 @@ def build_upload_id_index(api_key: str, demos_folder: str = "", log_fn=None) -> 
 
         # Build rl_id → filename from cache files
         rl_to_file: dict[str, str] = {}
+        folder_path = Path(demos_folder) if demos_folder else None
         for cf in CACHE_DIR.glob("*.json"):
             if cf.name.startswith("bc_"):
+                continue
+            # Only include cache entries whose replay file actually exists on disk
+            if folder_path and not (folder_path / cf.stem).exists():
                 continue
             try:
                 data = json.loads(cf.read_text(encoding="utf-8"))
